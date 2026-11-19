@@ -52,6 +52,9 @@ body.kraken #app { position: fixed; inset: 0; }
 .rot-handle { position: absolute; left: 50%; top: 10px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%;
   background: var(--accent); border: 2px solid #fff; cursor: grab; z-index: 6; touch-action: none; }
 .rot-handle:active { cursor: grabbing; }
+.snap-guide { position: absolute; pointer-events: none; z-index: 7; background: #ff4fa3; }
+.snap-guide.v { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; }
+.snap-guide.h { left: 0; right: 0; height: 1px; margin-top: -0.5px; }
 .stage-tools, .hint { color: var(--muted); max-width: 360px; margin: 0; }
 .media-msg { max-width: 360px; font-size: 12px; }
 .media-msg.err { color: #ff8a8a; }

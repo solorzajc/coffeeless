@@ -1,6 +1,6 @@
 // Editor: corre en la ventana de configuración de CAM (o en cualquier navegador para diseñar).
 import { loadState, saveState, activePreset, newPreset, newLayer, putMedia, deleteMedia, exportPreset, importPreset, uid } from './state.js';
-import { createRenderer, ensureFont, resolveMediaUrl } from './render.js';
+import { createRenderer, ensureFont, resolveMediaUrl, availableWeights } from './render.js';
 import { icon as svgIcon } from './icons.js';
 import { createDiagnostics } from './diag.js';
 import { createFontPicker } from './fontpicker.js';
@@ -9,6 +9,7 @@ import { METRICS, metricById, formatsFor, CLOCKS, clockById } from './sensors.js
 
 const PREVIEW = 360; // px en pantalla para la vista previa
 const BG = '__bg'; // id de selección del fondo
+const WEIGHT_NAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
 
 export function startEditor({ onData, hasRealData, getLastData }) {
   let state = loadState();
@@ -43,7 +44,9 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   const guide = h('div', { class: 'guide' });
   const selBox = h('div', { class: 'selbox' }, h('span', { class: 'selbox-lock' }, svgIcon('lock')));
   const rotHandle = h('div', { class: 'rot-handle', title: 'Arrastra para rotar el fondo', hidden: true });
-  frame.append(guide, selBox, rotHandle);
+  const snapV = h('div', { class: 'snap-guide v', hidden: true });
+  const snapH = h('div', { class: 'snap-guide h', hidden: true });
+  frame.append(guide, selBox, rotHandle, snapV, snapH);
   const mediaMsg = h('div', { class: 'media-msg' });
   stage.append(
     frame,
@@ -52,7 +55,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico (en el Kraken y en esta vista previa)'),
     ),
     mediaMsg,
-    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan.'),
+    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan. Al arrastrar se alinea con el lienzo y otras capas (Alt: sin imán).'),
     h('p', { class: 'hint' }, 'Con «Fondo» seleccionado en Capas: arrastra para moverlo, rueda para escalar, Shift+arrastrar o el asa de arriba para rotar.'),
   );
 
@@ -461,11 +464,26 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   }
 
   function textControls(l) {
-    const fontPicker = createFontPicker({ value: l.font, onChange: (v) => { l.font = v; ensureFont(v); commit(); } });
+    const weightSel = h('select', { onchange: (e) => { l.weight = Number(e.target.value); commit(); } });
+    const fillWeights = () => weightSel.replaceChildren(...weightOptions(l.font, l.weight).map(([v, label]) => h('option', { value: v, selected: v === l.weight }, label)));
+    fillWeights();
+    const fontPicker = createFontPicker({
+      value: l.font,
+      onChange: (v) => {
+        l.font = v;
+        ensureFont(v);
+        // si la fuente nueva no tiene ese grosor, usar el más cercano que sí tenga
+        const avail = availableWeights(v);
+        if (avail && !avail.includes(l.weight) && !(l.weight === 700 && Math.max(...avail) < 600))
+          l.weight = avail.reduce((a, b) => (Math.abs(b - l.weight) < Math.abs(a - l.weight) ? b : a));
+        fillWeights();
+        commit();
+      },
+    });
     return [
       h('div', { class: 'grid2' },
         field(h('span', {}, 'Fuente ', h('a', { href: 'https://fonts.google.com/', target: '_blank', rel: 'noopener' }, '(Google Fonts)')), fontPicker, 'div'),
-        field('Grosor', select(l, 'weight', [300, 400, 500, 600, 700, 800, 900].map((w) => [w, String(w)]), null, Number)),
+        field('Grosor', weightSel),
         field('Tamaño', slider(l, 'size', 6, 200, 1, 'px')),
         field('Color', color(l, 'color')),
         field('Espaciado', slider(l, 'letterSpacing', -10, 30, 0.5, 'px')),
@@ -475,6 +493,15 @@ export function startEditor({ onData, hasRealData, getLastData }) {
         field('Color de sombra', color(l, 'shadowColor')),
       ),
     ];
+  }
+
+  // Grosores que la fuente trae de verdad. Si solo tiene delgados, se ofrece una negrita simulada (el navegador la engrosa).
+  function weightOptions(font, cur) {
+    const avail = availableWeights(font) || [100, 200, 300, 400, 500, 600, 700, 800, 900];
+    const opts = avail.map((w) => [w, `${w} · ${WEIGHT_NAMES[w] || ''}`.trim()]);
+    if (Math.max(...avail) < 600) opts.push([700, '700 · Negrita simulada']);
+    if (!opts.some(([w]) => w === cur)) opts.push([cur, `${cur} · no disponible en esta fuente`]);
+    return opts.sort((a, b) => a[0] - b[0]);
   }
 
   // ---------- controles genéricos ----------
@@ -546,7 +573,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
       const l = layerAt(e.clientX, e.clientY);
       selectLayer(l ? l.id : null);
       if (!l) return;
-      drag = { mode: 'layer', l, sx: e.clientX, sy: e.clientY, x: l.x, y: l.y };
+      drag = { mode: 'layer', l, sx: e.clientX, sy: e.clientY, x: l.x, y: l.y, snap: snapContext(l) };
     }
     frame.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -561,8 +588,11 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     if (!drag.moved) return;
     const bg = preset.bg;
     if (drag.mode === 'layer') {
-      drag.l.x = Math.round(drag.x + dx * PX());
-      drag.l.y = Math.round(drag.y + dy * PX());
+      let nx = drag.x + dx * PX(), ny = drag.y + dy * PX();
+      if (!e.altKey) ({ nx, ny } = snap(drag.snap, nx, ny));
+      else hideGuides();
+      drag.l.x = Math.round(nx);
+      drag.l.y = Math.round(ny);
     } else if (drag.mode === 'bg') {
       bg.offsetX = clamp(+(drag.x + dx / PREVIEW).toFixed(3), -1, 1);
       bg.offsetY = clamp(+(drag.y + dy / PREVIEW).toFixed(3), -1, 1);
@@ -571,8 +601,57 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     }
     commit();
   }
+  // ---------- snapping: bordes y centro del lienzo, y bordes/centros de las otras capas ----------
+  const SNAP_PX = 5; // tolerancia en px de pantalla
+  function snapContext(l) {
+    const size = preset.size;
+    const k = PX();
+    const cr = renderer.canvas.getBoundingClientRect();
+    const box = (el) => {
+      const r = el.getBoundingClientRect();
+      const x0 = (r.left - cr.left) * k, y0 = (r.top - cr.top) * k, w = r.width * k, hh = r.height * k;
+      return { xs: [x0, x0 + w / 2, x0 + w], ys: [y0, y0 + hh / 2, y0 + hh], w, h: hh };
+    };
+    const xs = [0, size / 2, size], ys = [0, size / 2, size];
+    for (const o of preset.layers) {
+      if (o.id === l.id || o.visible === false) continue;
+      const el = renderer.nodeFor(o.id);
+      if (!el) continue;
+      const b = box(el);
+      xs.push(...b.xs);
+      ys.push(...b.ys);
+    }
+    const self = renderer.nodeFor(l.id);
+    const b = self ? box(self) : { w: 0, h: 0 };
+    return { xs, ys, hw: b.w / 2, hh: b.h / 2 };
+  }
+  // la capa se ancla en su centro: se prueban su borde izq./sup., centro y borde der./inf.
+  function snapAxis(pos, half, targets, thr) {
+    let best = null;
+    for (const off of [-half, 0, half])
+      for (const t of targets) {
+        const d = Math.abs(pos + off - t);
+        if (d <= thr && (!best || d < best.d)) best = { d, pos: t - off, line: t };
+      }
+    return best;
+  }
+  function snap(ctx, nx, ny) {
+    const thr = SNAP_PX * PX();
+    const sx = snapAxis(nx, ctx.hw, ctx.xs, thr);
+    const sy = snapAxis(ny, ctx.hh, ctx.ys, thr);
+    showSnapLine(snapV, sx && sx.line, 'left');
+    showSnapLine(snapH, sy && sy.line, 'top');
+    return { nx: sx ? sx.pos : nx, ny: sy ? sy.pos : ny };
+  }
+  function showSnapLine(el, line, prop) {
+    el.hidden = line === null || line === undefined || line === false;
+    if (!el.hidden) el.style[prop] = line / PX() + 'px';
+  }
+  const hideGuides = () => ((snapV.hidden = true), (snapH.hidden = true));
+
   function endDrag() {
     if (!drag) return;
+    hideGuides();
     const d = drag;
     drag = null;
     if (d.moved) return renderProps();

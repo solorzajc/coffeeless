@@ -2,6 +2,8 @@
 // - Al abrir muestra el catálogo completo; filtra solo mientras se escribe.
 // - Cada opción se dibuja con su propia fuente, cargando solo los glifos de su nombre (&text=) cuando entra en pantalla.
 // - Acepta cualquier nombre escrito a mano (Enter o "Usar …").
+// - Vista en vivo: clic en una opción o flechas la aplican sin cerrar, para comparar.
+//   Enter o clic fuera la confirman; Esc vuelve a la fuente que había al abrir.
 import { FONT_CATALOG } from './fonts.js';
 import { isFontLoaded } from './render.js';
 
@@ -23,6 +25,8 @@ function loadPreview(family) {
 
 export function createFontPicker({ value, onChange }) {
   let current = value || '';
+  let atOpen = current; // fuente al abrir, para Esc
+  let typedSincePreview = false;
   let query = '';
   let cat = '';
   let open = false;
@@ -130,7 +134,11 @@ export function createFontPicker({ value, onChange }) {
     k.textContent = custom ? 'Google Fonts o instalada en tu PC' : CAT_LABEL[c] || '';
     o.append(n, k);
     o.addEventListener('mousedown', (e) => e.preventDefault());
-    o.addEventListener('click', () => choose(name));
+    o.addEventListener('click', () => {
+      active = [...rows()].indexOf(o);
+      highlight(false);
+      preview(name);
+    });
     return o;
   }
 
@@ -147,6 +155,8 @@ export function createFontPicker({ value, onChange }) {
     panel.hidden = false;
     input.setAttribute('aria-expanded', 'true');
     query = ''; // al abrir siempre se ve el catálogo completo
+    atOpen = current;
+    typedSincePreview = false;
     renderChips();
     filter();
     input.select();
@@ -157,18 +167,37 @@ export function createFontPicker({ value, onChange }) {
     panel.hidden = true;
     input.setAttribute('aria-expanded', 'false');
   }
-  function choose(name) {
-    let v = (name || '').trim();
+  const canonical = (name) => {
+    const v = (name || '').trim();
     const hit = FONT_CATALOG.find((f) => norm(f[0]) === norm(v));
-    if (hit) v = hit[0]; // 'bebas neue' → 'Bebas Neue'
-
-    if (!v) return cancel();
+    return hit ? hit[0] : v; // 'bebas neue' → 'Bebas Neue'
+  };
+  // Aplica una fuente sin cerrar el panel (vista en vivo en el lienzo).
+  function preview(name) {
+    const v = canonical(name);
+    if (!v) return;
+    typedSincePreview = false;
+    if (!query) input.value = v; // si está filtrando, no borrar lo que escribió
+    rows().forEach((r) => r.classList.toggle('cur', r.dataset.family === v));
+    if (v === current) return;
     current = v;
-    input.value = v;
-    closePanel();
     onChange(v);
   }
-  function cancel() {
+  function choose(name) {
+    const v = canonical(name);
+    if (!v) return revert();
+    preview(v);
+    input.value = v;
+    closePanel();
+  }
+  // cerrar dejando la fuente que se ve ahora
+  function accept() {
+    input.value = current;
+    closePanel();
+  }
+  // Esc: volver a la fuente que había al abrir
+  function revert() {
+    if (current !== atOpen) (current = atOpen), onChange(atOpen);
     input.value = current;
     closePanel();
   }
@@ -178,6 +207,7 @@ export function createFontPicker({ value, onChange }) {
   input.addEventListener('input', () => {
     if (!open) openPanel();
     query = input.value;
+    typedSincePreview = true;
     filter();
   });
   input.addEventListener('keydown', (e) => {
@@ -188,24 +218,26 @@ export function createFontPicker({ value, onChange }) {
       active = (active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
       if (active >= n - 5 && shown < items.length) appendRows();
       highlight(false);
+      preview(rows()[active].dataset.family);
       e.preventDefault();
     } else if (e.key === 'Enter') {
       const el = rows()[active];
       choose(open && el ? el.dataset.family : input.value);
       e.preventDefault();
     } else if (e.key === 'Escape') {
-      cancel();
+      revert();
       e.preventDefault();
     }
   });
   input.addEventListener('blur', () => {
-    // al salir: si escribió algo distinto, se usa tal cual; si no, se restaura
+    if (!open) return;
+    // clic fuera = confirmar. Si escribió un nombre y no eligió nada después, se usa lo escrito.
     const v = input.value.trim();
-    if (open && v && v !== current && query) choose(v);
-    else cancel();
+    if (typedSincePreview && v) choose(v);
+    else accept();
   });
   toggle.addEventListener('mousedown', (e) => e.preventDefault());
-  toggle.addEventListener('click', () => (open ? cancel() : (input.focus(), openPanel())));
+  toggle.addEventListener('click', () => (open ? accept() : (input.focus(), openPanel())));
 
   return root;
 }

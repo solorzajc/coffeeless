@@ -15,6 +15,20 @@ function weightSpec(family) {
 }
 export const isFontLoaded = (family) => loadedFonts.has(family);
 
+// Pesos reales de una familia del catálogo (p. ej. [400] o [100, 200, …, 900]); null si no está en el catálogo.
+export function availableWeights(family) {
+  weightsOf ??= new Map(FONT_CATALOG.map((f) => [f[0], f[2]]));
+  const w = weightsOf.get(family);
+  if (!w) return null;
+  if (w.includes('..')) {
+    const [a, b] = w.split('..').map(Number);
+    const out = [];
+    for (let x = Math.ceil(a / 100) * 100; x <= b; x += 100) out.push(x);
+    return out.length ? out : [a];
+  }
+  return w.split(';').map(Number);
+}
+
 export function ensureFont(family) {
   if (!family || loadedFonts.has(family) || SYSTEM_FONTS.has(family)) return;
   loadedFonts.add(family);
