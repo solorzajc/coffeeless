@@ -1,0 +1,75 @@
+:root {
+  --bg: #0e0e11;
+  --card: #17171c;
+  --line: #2a2a33;
+  --text: #e8e8ee;
+  --muted: #8b8b98;
+  --accent: #8b5cf6;
+  --danger: #e5484d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 Inter, system-ui, sans-serif; }
+
+/* ---------- lienzo (compartido) ---------- */
+.cl-canvas { position: relative; overflow: hidden; transform-origin: 0 0; background: #000; }
+.cl-bg, .cl-layers { position: absolute; inset: 0; }
+.cl-bg-media { position: absolute; inset: 0; width: 100%; height: 100%; transform-origin: 50% 50%; display: block; }
+.cl-layer { position: absolute; white-space: pre; line-height: 1; user-select: none; }
+
+/* ---------- modo Kraken ---------- */
+body.kraken { overflow: hidden; background: #000; }
+body.kraken #app { position: fixed; inset: 0; }
+
+/* ---------- editor ---------- */
+.editor header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.brand b { font-size: 16px; color: var(--accent); }
+.preset-bar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1; }
+.preset-select { min-width: 160px; }
+.badge { font-size: 12px; color: var(--muted); }
+.badge.live { color: #46d17a; }
+.editor main { display: flex; gap: 16px; padding: 16px; align-items: flex-start; flex-wrap: wrap; }
+.stage { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.frame { position: relative; border: 1px solid var(--line); background: #000; cursor: default; touch-action: none; }
+.frame .cl-layer { cursor: move; }
+.guide { position: absolute; inset: 0; border-radius: 50%; outline: 1px dashed rgba(255, 255, 255, 0.35); pointer-events: none; }
+.selbox { position: absolute; border: 1px dashed var(--accent); pointer-events: none; }
+.stage-tools, .hint { color: var(--muted); max-width: 360px; margin: 0; }
+.media-msg { max-width: 360px; font-size: 12px; }
+.media-msg.err { color: #ff8a8a; }
+.media-msg.note { color: #f5c26b; }
+.media-msg.ok { display: none; }
+.side { flex: 1; min-width: 320px; max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.card-title { font-weight: 600; font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.flabel { color: var(--muted); font-size: 12px; }
+.flabel a { color: var(--accent); }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row input[type='url'] { flex: 1; min-width: 0; }
+.col { display: flex; flex-direction: column; gap: 4px; }
+.muted { color: var(--muted); }
+input, select, button { font: inherit; color: var(--text); }
+input[type='text'], input[type='url'], input[type='number'], select {
+  background: #101014; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%;
+}
+input[type='color'] { width: 100%; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: #101014; padding: 2px; }
+.slider { display: flex; align-items: center; gap: 6px; }
+.slider input[type='range'] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.slider .num { width: 70px; flex: none; }
+.unit { color: var(--muted); font-size: 11px; }
+.btn { background: #24242c; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.danger:hover { border-color: var(--danger); color: #ff8a8a; }
+.add-row { display: flex; gap: 6px; }
+.layer-list { display: flex; flex-direction: column; gap: 4px; }
+.layer { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.layer.sel { border-color: var(--accent); background: rgba(139, 92, 246, 0.12); }
+.layer.hidden-layer .lname { opacity: 0.45; }
+.layer .ico { width: 18px; text-align: center; color: var(--accent); }
+.layer .lname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ibtn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px 4px; font-size: 13px; }
+.ibtn:hover { color: var(--text); }
+.check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+@media (max-width: 760px) { .stage { position: static; } .side { max-width: none; } }
