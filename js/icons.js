@@ -15,6 +15,7 @@ const PATHS = {
   rect: '<rect x="3" y="6" width="18" height="12" rx="2"/>',
   ellipse: '<ellipse cx="12" cy="12" rx="9" ry="7"/>',
   line: '<path d="M4 12h16"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 

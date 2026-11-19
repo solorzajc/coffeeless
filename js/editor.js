@@ -14,9 +14,12 @@ const FONTS = [
 ];
 
 const PREVIEW = 360; // px en pantalla para la vista previa
+const BG = '__bg'; // id de selección del fondo
 
 export function startEditor({ onData, hasRealData, getLastData }) {
   let state = loadState();
+  // El diagnóstico se apaga cada vez que se abre el editor (se activa a mano cuando hace falta).
+  if (state.debug) (state.debug = false), saveState(state);
   let preset = activePreset(state);
   let selectedId = null;
   let showGuide = true;
@@ -28,19 +31,15 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   app.className = 'editor';
 
   // ---------- estructura ----------
+  // CAM no muestra prompt()/confirm()/alert(), así que todo se resuelve dentro de la barra.
   const presetSelect = h('select', { class: 'preset-select', onchange: (e) => switchPreset(e.target.value) });
+  const nameInput = h('input', { type: 'text', class: 'preset-name', hidden: true, maxlength: 60, 'aria-label': 'Nombre del preset' });
+  const presetActions = h('div', { class: 'preset-actions' });
+  const barMsg = h('span', { class: 'bar-msg', role: 'status' });
   const liveBadge = h('span', { class: 'badge' });
   const header = h('header', {},
     h('div', { class: 'brand' }, h('b', {}, 'coffeeless'), h('span', { class: 'muted' }, ' · Kraken LCD')),
-    h('div', { class: 'preset-bar' },
-      presetSelect,
-      btn('Nuevo', () => addPreset(newPreset('Pantalla ' + (state.presets.length + 1)))),
-      btn('Duplicar', () => addPreset({ ...clone(preset), id: uid(), name: preset.name + ' (copia)' })),
-      btn('Renombrar', renamePreset),
-      btn('Eliminar', removePreset, 'danger'),
-      btn('Exportar', doExport),
-      btn('Importar', () => importInput.click()),
-    ),
+    h('div', { class: 'preset-bar' }, presetSelect, nameInput, presetActions, barMsg),
     liveBadge,
   );
   const importInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: doImport });
@@ -48,8 +47,9 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   const stage = h('div', { class: 'stage' });
   const frame = h('div', { class: 'frame', style: `width:${PREVIEW}px;height:${PREVIEW}px` });
   const guide = h('div', { class: 'guide' });
-  const selBox = h('div', { class: 'selbox' });
-  frame.append(guide, selBox);
+  const selBox = h('div', { class: 'selbox' }, h('span', { class: 'selbox-lock' }, svgIcon('lock')));
+  const rotHandle = h('div', { class: 'rot-handle', title: 'Arrastra para rotar el fondo', hidden: true });
+  frame.append(guide, selBox, rotHandle);
   const mediaMsg = h('div', { class: 'media-msg' });
   stage.append(
     frame,
@@ -58,7 +58,8 @@ export function startEditor({ onData, hasRealData, getLastData }) {
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico (en el Kraken y en esta vista previa)'),
     ),
     mediaMsg,
-    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar.'),
+    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan.'),
+    h('p', { class: 'hint' }, 'Con «Fondo» seleccionado en Capas: arrastra para moverlo, rueda para escalar, Shift+arrastrar o el asa de arriba para rotar.'),
   );
 
   const bgPanel = h('section', { class: 'card' });
@@ -115,6 +116,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     state.presets.forEach((p) => presetSelect.append(h('option', { value: p.id, selected: p.id === preset.id }, p.name)));
   }
   function switchPreset(id) {
+    if (barMode !== 'normal') (barMode = 'normal'), renderPresetBar();
     state.activeId = id;
     preset = activePreset(state);
     selectedId = null;
@@ -125,16 +127,67 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     state.presets.push(p);
     switchPreset(p.id);
   }
-  function renamePreset() {
-    const n = prompt('Nombre del preset', preset.name);
-    if (n && n.trim()) (preset.name = n.trim()), refreshAll();
+  // Barra: modo normal, renombrando o confirmando eliminación.
+  let barMode = 'normal';
+  let msgT;
+  function say(text, kind = '') {
+    clearTimeout(msgT);
+    barMsg.textContent = text;
+    barMsg.className = 'bar-msg ' + kind;
+    if (text) msgT = setTimeout(() => (barMsg.textContent = ''), 5000);
   }
-  async function removePreset() {
-    if (state.presets.length === 1) return alert('Necesitas al menos un preset.');
-    if (!confirm(`¿Eliminar "${preset.name}"?`)) return;
+  function renderPresetBar() {
+    presetActions.innerHTML = '';
+    presetSelect.hidden = barMode === 'rename';
+    nameInput.hidden = barMode !== 'rename';
+    if (barMode === 'rename')
+      put(presetActions, btn('Guardar', finishRename, 'primary'), btn('Cancelar', () => endRename(false)));
+    else if (barMode === 'delete')
+      put(presetActions,
+        h('span', { class: 'confirm-q' }, `¿Eliminar “${preset.name}”?`),
+        btn('Sí, eliminar', removePreset, 'danger solid'),
+        btn('Cancelar', () => setBarMode('normal')));
+    else
+      put(presetActions,
+        btn('Nuevo', () => (addPreset(newPreset('Pantalla ' + (state.presets.length + 1))), startRename())),
+        btn('Duplicar', () => (addPreset({ ...clone(preset), id: uid(), name: preset.name + ' (copia)' }), startRename())),
+        btn('Renombrar', startRename),
+        btn('Eliminar', () => (state.presets.length === 1 ? say('Necesitas al menos un preset.', 'err') : setBarMode('delete')), 'danger'),
+        btn('Exportar', doExport),
+        btn('Importar', () => importInput.click()));
+  }
+  function setBarMode(m) {
+    barMode = m;
+    renderPresetBar();
+  }
+  function startRename() {
+    setBarMode('rename');
+    nameInput.value = preset.name;
+    nameInput.focus();
+    nameInput.select();
+  }
+  function endRename(save) {
+    if (barMode !== 'rename') return;
+    const n = nameInput.value.trim();
+    if (save && n) preset.name = n;
+    setBarMode('normal');
+    renderPresetSelect();
+    commit();
+  }
+  const finishRename = () => endRename(true);
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finishRename();
+    else if (e.key === 'Escape') endRename(false);
+  });
+  // al hacer clic fuera, guardar (salvo que el clic sea en Guardar/Cancelar)
+  nameInput.addEventListener('blur', (e) => { if (!presetActions.contains(e.relatedTarget)) finishRename(); });
+  function removePreset() {
     if (preset.bg.mediaId) deleteMedia(preset.bg.mediaId).catch(() => {});
+    const name = preset.name;
     state.presets = state.presets.filter((p) => p.id !== preset.id);
+    barMode = 'normal';
     switchPreset(state.presets[0].id);
+    say(`Eliminado “${name}”.`);
   }
   async function doExport() {
     const data = await exportPreset(preset);
@@ -152,7 +205,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
       const p = await importPreset(JSON.parse(await file.text()));
       addPreset(p);
     } catch (err) {
-      alert('No se pudo importar: ' + err.message);
+      say('No se pudo importar: ' + err.message, 'err');
     }
   }
 
@@ -195,13 +248,9 @@ export function startEditor({ onData, hasRealData, getLastData }) {
         bg.source !== 'none' ? field('Ajuste', select(bg, 'fit', [['cover', 'Cubrir'], ['contain', 'Contener'], ['fill', 'Estirar']])) : null,
       ),
       bg.source !== 'none'
-        ? h('div', { class: 'grid2' },
-            field('Escala', slider(bg, 'scale', 0.1, 4, 0.01)),
-            field('Rotación', slider(bg, 'rotate', -180, 180, 1, '°')),
-            field('Desplazamiento X', slider(bg, 'offsetX', -1, 1, 0.01)),
-            field('Desplazamiento Y', slider(bg, 'offsetY', -1, 1, 0.01)),
-            field('Opacidad', slider(bg, 'opacity', 0, 1, 0.01)),
-          )
+        ? h('div', { class: 'row' },
+            btn(selectedId === BG ? 'Fondo seleccionado ✓' : 'Mover / escalar / rotar', () => selectLayer(BG)),
+            h('small', { class: 'muted' }, 'o elige «Fondo» en Capas'))
         : null,
     );
   }
@@ -221,7 +270,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
 
   function renderLayerList() {
     layerList.innerHTML = '';
-    if (!preset.layers.length) layerList.append(h('p', { class: 'muted' }, 'Sin capas. Agrega un sensor, texto o forma.'));
+    if (!preset.layers.length) layerList.append(h('p', { class: 'muted' }, 'Sin capas. Agrega un sensor, reloj, texto o forma.'));
     [...preset.layers].reverse().forEach((l) => {
       const idx = preset.layers.indexOf(l);
       layerList.append(
@@ -229,7 +278,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
           h('span', { class: 'ico' }, svgIcon(iconOf(l))),
           h('span', { class: 'lname' }, labelOf(l)),
           ibtn(l.visible === false ? 'eyeOff' : 'eye', l.visible === false ? 'Mostrar' : 'Ocultar', () => ((l.visible = l.visible === false), commit({ list: true }))),
-          ibtn(l.locked ? 'lock' : 'unlock', l.locked ? 'Desbloquear' : 'Bloquear', () => ((l.locked = !l.locked), commit({ list: true }))),
+          ibtn(l.locked ? 'lock' : 'unlock', l.locked ? 'Desbloquear' : 'Bloquear', () => ((l.locked = !l.locked), commit({ list: true, props: l.id === selectedId }))),
           ibtn('up', 'Subir', () => move(idx, 1)),
           ibtn('down', 'Bajar', () => move(idx, -1)),
           ibtn('copy', 'Duplicar', () => {
@@ -242,6 +291,13 @@ export function startEditor({ onData, hasRealData, getLastData }) {
         ),
       );
     });
+    // el fondo siempre va al final (debajo de todo)
+    layerList.append(
+      h('div', { class: 'layer bg-layer' + (selectedId === BG ? ' sel' : ''), onclick: () => selectLayer(BG) },
+        h('span', { class: 'ico' }, svgIcon('image')),
+        h('span', { class: 'lname' }, 'Fondo', preset.bg.source === 'none' ? h('span', { class: 'muted' }, ' · solo color') : null),
+      ),
+    );
   }
   function move(idx, dir) {
     const j = idx + dir;
@@ -257,21 +313,25 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     commit({ list: true, props: true });
   }
   function removeLayer(id) {
+    if (id === BG) return;
     preset.layers = preset.layers.filter((l) => l.id !== id);
     if (selectedId === id) selectedId = null;
     commit({ list: true, props: true });
   }
   function selectLayer(id) {
     if (selectedId === id) return;
+    const bgChanged = (selectedId === BG) !== (id === BG);
     selectedId = id;
     renderLayerList();
     renderProps();
+    if (bgChanged) renderBg();
     drawSelection();
   }
   const selected = () => preset.layers.find((l) => l.id === selectedId);
 
   // ---------- propiedades ----------
   function renderProps() {
+    if (selectedId === BG) return renderBgProps();
     const l = selected();
     if (l?.id !== propsLayerId) (propsLayerId = l?.id), (advancedOpen = false);
     propsPanel.innerHTML = '';
@@ -281,6 +341,10 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     }
     const up = () => commit({ list: true });
     put(propsPanel, h('div', { class: 'card-title with-ico' }, svgIcon(iconOf(l)), labelOf(l)));
+    if (l.locked)
+      put(propsPanel, h('div', { class: 'lock-note' }, svgIcon('lock'),
+        h('span', {}, 'Bloqueada: no se mueve en la vista previa y los clics la atraviesan. Puedes editarla aquí.'),
+        btn('Desbloquear', () => ((l.locked = false), commit({ list: true, props: true })))));
     put(propsPanel, field('Nombre (opcional)', text(l, 'name', up)));
 
     if (l.type === 'sensor') {
@@ -345,6 +409,29 @@ export function startEditor({ onData, hasRealData, getLastData }) {
           ),
         ),
       );
+  }
+
+  function renderBgProps() {
+    const bg = preset.bg;
+    propsPanel.innerHTML = '';
+    put(propsPanel, h('div', { class: 'card-title with-ico' }, svgIcon('image'), 'Fondo'));
+    if (bg.source === 'none') {
+      put(propsPanel, h('p', { class: 'muted' }, 'El fondo es solo color. Elige una URL o un archivo en el panel «Fondo» para poder moverlo, escalarlo y rotarlo.'));
+      return;
+    }
+    put(propsPanel,
+      h('p', { class: 'muted' }, 'Arrastra en la vista previa para moverlo, rueda para escalar, Shift+arrastrar o el asa para rotar. Los controles sirven de ajuste fino.'),
+      h('div', { class: 'grid2' },
+        field('Escala', slider(bg, 'scale', 0.1, 4, 0.01)),
+        field('Rotación', slider(bg, 'rotate', -180, 180, 1, '°')),
+        field('Desplazamiento X', slider(bg, 'offsetX', -1, 1, 0.01)),
+        field('Desplazamiento Y', slider(bg, 'offsetY', -1, 1, 0.01)),
+        field('Opacidad', slider(bg, 'opacity', 0, 1, 0.01)),
+      ),
+      h('div', { class: 'row' },
+        btn('Restablecer posición', () => (Object.assign(bg, { scale: 1, rotate: 0, offsetX: 0, offsetY: 0 }), commit({ props: true }))),
+      ),
+    );
   }
 
   function shapeControls(l) {
@@ -422,34 +509,115 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     return h('div', { class: 'slider', 'data-key': key }, rng, num, unit ? h('span', { class: 'unit' }, unit) : null);
   }
 
-  // ---------- arrastrar en la vista previa ----------
+  // ---------- vista previa: selección y arrastre ----------
+  // Capa bajo el puntero, de arriba hacia abajo, saltando bloqueadas y ocultas (estilo Figma).
+  function layerAt(x, y) {
+    for (const el of document.elementsFromPoint(x, y)) {
+      if (!el.classList.contains('cl-layer')) continue;
+      const l = preset.layers.find((q) => q.id === el.dataset.id);
+      if (l && !l.locked && l.visible !== false) return l;
+    }
+    return null;
+  }
+  const PX = () => preset.size / PREVIEW; // px de diseño por px de pantalla
+  function bgCenter() {
+    const fr = frame.getBoundingClientRect();
+    const bg = preset.bg;
+    return { x: fr.left + fr.width * (0.5 + (bg.offsetX || 0)), y: fr.top + fr.height * (0.5 + (bg.offsetY || 0)) };
+  }
+  const angleTo = (c, e) => (Math.atan2(e.clientY - c.y, e.clientX - c.x) * 180) / Math.PI;
+  const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
+  const startRotate = (e) => {
+    const c = bgCenter();
+    return { mode: 'rotate', c, a0: angleTo(c, e), r0: preset.bg.rotate || 0, sx: e.clientX, sy: e.clientY };
+  };
+
   let drag = null;
+  rotHandle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    drag = { ...startRotate(e), moved: true };
+    rotHandle.setPointerCapture(e.pointerId);
+  });
+  rotHandle.addEventListener('pointermove', (e) => onDragMove(e));
+  rotHandle.addEventListener('pointerup', () => endDrag());
+
   frame.addEventListener('pointerdown', (e) => {
-    const el = e.target.closest('.cl-layer');
-    const l = el && preset.layers.find((x) => x.id === el.dataset.id);
-    if (!l) { selectLayer(null); return; }
-    selectLayer(l.id);
-    if (l.locked) return;
-    drag = { l, sx: e.clientX, sy: e.clientY, x: l.x, y: l.y };
+    const bg = preset.bg;
+    // Con el fondo seleccionado, arrastrar en cualquier punto lo mueve (o lo rota con Shift);
+    // un clic sin arrastre selecciona lo que haya debajo.
+    if (selectedId === BG && bg.source !== 'none') {
+      drag = e.shiftKey ? startRotate(e) : { mode: 'bg', sx: e.clientX, sy: e.clientY, x: bg.offsetX || 0, y: bg.offsetY || 0 };
+      drag.click = { x: e.clientX, y: e.clientY };
+    } else {
+      const l = layerAt(e.clientX, e.clientY);
+      selectLayer(l ? l.id : null);
+      if (!l) return;
+      drag = { mode: 'layer', l, sx: e.clientX, sy: e.clientY, x: l.x, y: l.y };
+    }
     frame.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
-  frame.addEventListener('pointermove', (e) => {
+  frame.addEventListener('pointermove', (e) => onDragMove(e));
+  frame.addEventListener('pointerup', () => endDrag());
+
+  function onDragMove(e) {
     if (!drag) return;
-    const k = preset.size / PREVIEW;
-    drag.l.x = Math.round(drag.x + (e.clientX - drag.sx) * k);
-    drag.l.y = Math.round(drag.y + (e.clientY - drag.sy) * k);
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (!drag.moved) return;
+    const bg = preset.bg;
+    if (drag.mode === 'layer') {
+      drag.l.x = Math.round(drag.x + dx * PX());
+      drag.l.y = Math.round(drag.y + dy * PX());
+    } else if (drag.mode === 'bg') {
+      bg.offsetX = clamp(+(drag.x + dx / PREVIEW).toFixed(3), -1, 1);
+      bg.offsetY = clamp(+(drag.y + dy / PREVIEW).toFixed(3), -1, 1);
+    } else if (drag.mode === 'rotate') {
+      bg.rotate = Math.round(wrap180(drag.r0 + angleTo(drag.c, e) - drag.a0));
+    }
     commit();
-  });
-  frame.addEventListener('pointerup', () => {
-    if (drag) (drag = null), renderProps();
-  });
+  }
+  function endDrag() {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (d.moved) return renderProps();
+    // clic sin arrastre con el fondo seleccionado: seleccionar lo que haya debajo
+    if (d.click) {
+      const l = layerAt(d.click.x, d.click.y);
+      selectLayer(l ? l.id : null);
+    }
+  }
+
+  // Rueda = escala del fondo (solo con el fondo seleccionado)
+  let wheelT;
+  frame.addEventListener('wheel', (e) => {
+    if (selectedId !== BG || preset.bg.source === 'none') return;
+    e.preventDefault();
+    const bg = preset.bg;
+    bg.scale = clamp(+((bg.scale || 1) * Math.exp(-e.deltaY * 0.0015)).toFixed(3), 0.1, 4);
+    commit();
+    clearTimeout(wheelT);
+    wheelT = setTimeout(() => renderProps(), 150);
+  }, { passive: false });
 
   addEventListener('keydown', (e) => {
-    const l = selected();
-    if (!l || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) return;
     const d = e.shiftKey ? 10 : 1;
     const moves = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] };
+    if (selectedId === BG) {
+      if (moves[e.key] && preset.bg.source !== 'none') {
+        const bg = preset.bg;
+        bg.offsetX = clamp(+((bg.offsetX || 0) + moves[e.key][0] / preset.size).toFixed(3), -1, 1);
+        bg.offsetY = clamp(+((bg.offsetY || 0) + moves[e.key][1] / preset.size).toFixed(3), -1, 1);
+        commit({ props: true });
+        e.preventDefault();
+      }
+      return;
+    }
+    const l = selected();
+    if (!l) return;
     if (moves[e.key] && !l.locked) {
       l.x += moves[e.key][0];
       l.y += moves[e.key][1];
@@ -462,12 +630,23 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   });
 
   function drawSelection() {
+    const isBg = selectedId === BG && preset.bg.source !== 'none';
+    rotHandle.hidden = !isBg;
+    selBox.classList.toggle('bg', isBg);
+    if (isBg) {
+      // el fondo puede salirse del lienzo: se marca el lienzo completo y el asa de rotación arriba
+      selBox.hidden = false;
+      selBox.classList.remove('locked');
+      Object.assign(selBox.style, { left: '0px', top: '0px', width: PREVIEW + 'px', height: PREVIEW + 'px' });
+      return;
+    }
     const l = selected();
     const el = l && renderer.nodeFor(l.id);
     if (!el || l.visible === false) return (selBox.hidden = true);
     const fr = frame.getBoundingClientRect();
     const r = el.getBoundingClientRect();
     selBox.hidden = false;
+    selBox.classList.toggle('locked', !!l.locked);
     Object.assign(selBox.style, { left: r.left - fr.left - 3 + 'px', top: r.top - fr.top - 3 + 'px', width: r.width + 6 + 'px', height: r.height + 6 + 'px' });
   }
 
@@ -477,6 +656,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
 
   function refreshAll() {
     renderPresetSelect();
+    renderPresetBar();
     renderBg();
     renderLayerList();
     renderProps();
@@ -508,6 +688,7 @@ function ibtn(name, title, fn) {
 }
 const put = (el, ...c) => el.append(...c.flat().filter((x) => x !== null && x !== undefined && x !== false));
 const clone = (o) => JSON.parse(JSON.stringify(o));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '') || 'preset';
 const round = (v, step) => {
   const d = String(step).split('.')[1]?.length || 0;
