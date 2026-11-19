@@ -12,6 +12,10 @@ const PATHS = {
   sensor: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
   text: '<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>',
   shape: '<rect x="4" y="4" width="16" height="16" rx="3"/>',
+  rect: '<rect x="3" y="6" width="18" height="12" rx="2"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="9" ry="7"/>',
+  line: '<path d="M4 12h16"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 
 export function icon(name) {

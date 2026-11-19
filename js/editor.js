@@ -2,7 +2,8 @@
 import { loadState, saveState, activePreset, newPreset, newLayer, putMedia, deleteMedia, exportPreset, importPreset, uid } from './state.js';
 import { createRenderer, ensureFont, resolveMediaUrl } from './render.js';
 import { icon as svgIcon } from './icons.js';
-import { METRICS, metricById, formatsFor } from './sensors.js';
+import { createDiagnostics } from './diag.js';
+import { METRICS, metricById, formatsFor, CLOCKS, clockById } from './sensors.js';
 
 const FONTS = [
   'Inter', 'Fasthand', 'Freehand', 'Rye', 'Ultra', 'Abril Fatface', 'Bebas Neue', 'Anton', 'Oswald', 'Teko', 'Rajdhani',
@@ -14,7 +15,7 @@ const FONTS = [
 
 const PREVIEW = 360; // px en pantalla para la vista previa
 
-export function startEditor({ onData, hasRealData }) {
+export function startEditor({ onData, hasRealData, getLastData }) {
   let state = loadState();
   let preset = activePreset(state);
   let selectedId = null;
@@ -54,7 +55,7 @@ export function startEditor({ onData, hasRealData }) {
     frame,
     h('div', { class: 'stage-tools' },
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { showGuide = e.target.checked; guide.hidden = !showGuide; } }), ' Guía del borde de la bomba (solo en el editor)'),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico en el Kraken (datos, resolución, fuentes, fondo)'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico (en el Kraken y en esta vista previa)'),
     ),
     mediaMsg,
     h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar.'),
@@ -69,6 +70,7 @@ export function startEditor({ onData, hasRealData }) {
       h('div', { class: 'card-title' }, 'Capas'),
       h('div', { class: 'add-row' },
         btn('+ Sensor', () => addLayer('sensor')),
+        btn('+ Reloj', () => addLayer('clock')),
         btn('+ Texto', () => addLayer('text')),
         btn('+ Forma', () => addLayer('shape')),
       ),
@@ -81,6 +83,10 @@ export function startEditor({ onData, hasRealData }) {
 
   const renderer = createRenderer(frame, { onMediaStatus: showMediaStatus });
   frame.insertBefore(renderer.canvas, guide);
+  const diag = createDiagnostics(frame, {
+    title: 'Diagnóstico · editor',
+    onData, getLastData, isReal: hasRealData, getState: () => state, getMediaStatus: renderer.mediaStatus,
+  });
 
   // ---------- datos ----------
   onData((d, real) => {
@@ -99,6 +105,7 @@ export function startEditor({ onData, hasRealData }) {
     saveT = setTimeout(() => saveState(state), 120);
     if (list) renderLayerList();
     if (props) renderProps();
+    diag.toggle(!!state.debug);
     requestAnimationFrame(drawSelection);
   }
 
@@ -205,7 +212,12 @@ export function startEditor({ onData, hasRealData }) {
   }
 
   // ---------- capas ----------
-  const labelOf = (l) => l.name || (l.type === 'sensor' ? metricById(l.metric).label : l.type === 'text' ? l.text : 'Forma');
+  const SHAPES = [['rect', 'Rectángulo'], ['ellipse', 'Elipse'], ['line', 'Línea']];
+  const shapeLabel = (l) => SHAPES.find(([k]) => k === (l.shape || 'rect'))[1];
+  const labelOf = (l) =>
+    l.name ||
+    (l.type === 'sensor' ? metricById(l.metric).label : l.type === 'clock' ? clockById(l.clock).label : l.type === 'text' ? l.text : shapeLabel(l));
+  const iconOf = (l) => (l.type === 'shape' ? l.shape || 'rect' : l.type);
 
   function renderLayerList() {
     layerList.innerHTML = '';
@@ -214,7 +226,7 @@ export function startEditor({ onData, hasRealData }) {
       const idx = preset.layers.indexOf(l);
       layerList.append(
         h('div', { class: 'layer' + (l.id === selectedId ? ' sel' : '') + (l.visible === false ? ' hidden-layer' : ''), onclick: () => selectLayer(l.id) },
-          h('span', { class: 'ico' }, svgIcon(l.type)),
+          h('span', { class: 'ico' }, svgIcon(iconOf(l))),
           h('span', { class: 'lname' }, labelOf(l)),
           ibtn(l.visible === false ? 'eyeOff' : 'eye', l.visible === false ? 'Mostrar' : 'Ocultar', () => ((l.visible = l.visible === false), commit({ list: true }))),
           ibtn(l.locked ? 'lock' : 'unlock', l.locked ? 'Desbloquear' : 'Bloquear', () => ((l.locked = !l.locked), commit({ list: true }))),
@@ -268,7 +280,7 @@ export function startEditor({ onData, hasRealData }) {
       return;
     }
     const up = () => commit({ list: true });
-    put(propsPanel, h('div', { class: 'card-title with-ico' }, svgIcon(l.type), labelOf(l)));
+    put(propsPanel, h('div', { class: 'card-title with-ico' }, svgIcon(iconOf(l)), labelOf(l)));
     put(propsPanel, field('Nombre (opcional)', text(l, 'name', up)));
 
     if (l.type === 'sensor') {
@@ -291,20 +303,24 @@ export function startEditor({ onData, hasRealData }) {
         ),
       );
     }
-    if (l.type === 'text') put(propsPanel, field('Texto', text(l, 'text', up)));
-    if (l.type === 'sensor' || l.type === 'text') put(propsPanel, ...textControls(l));
-    if (l.type === 'shape')
-      put(propsPanel, 
+    if (l.type === 'clock') {
+      const clockSel = h('select', {
+        onchange: (e) => {
+          l.clock = e.target.value;
+          l.format = formatsFor(l.clock)[0].id;
+          commit({ list: true, props: true });
+        },
+      }, ...CLOCKS.map((c) => h('option', { value: c.id, selected: c.id === l.clock }, c.label)));
+      put(propsPanel,
         h('div', { class: 'grid2' },
-          field('Ancho', slider(l, 'w', 1, 480, 1, 'px')),
-          field('Alto', slider(l, 'h', 1, 480, 1, 'px')),
-          field('Esquinas', slider(l, 'radius', 0, 240, 1, 'px')),
-          field('Relleno', color(l, 'fill')),
-          field('Opacidad del relleno', slider(l, 'fillOpacity', 0, 1, 0.01)),
-          field('Borde', color(l, 'borderColor')),
-          field('Grosor del borde', slider(l, 'borderWidth', 0, 30, 1, 'px')),
+          field('Mostrar', clockSel),
+          field('Formato', select(l, 'format', formatsFor(clockById(l.clock).id).map((f) => [f.id, f.ex]))),
         ),
       );
+    }
+    if (l.type === 'text') put(propsPanel, field('Texto', text(l, 'text', up)));
+    if (l.type !== 'shape') put(propsPanel, ...textControls(l));
+    if (l.type === 'shape') put(propsPanel, ...shapeControls(l));
     put(propsPanel, 
       h('div', { class: 'grid2' },
         field('Posición X', slider(l, 'x', -120, 360, 1, 'px')),
@@ -318,7 +334,7 @@ export function startEditor({ onData, hasRealData }) {
       ),
     );
     // "Avanzado" siempre al final de la capa, contraído al cambiar de capa
-    if (l.type === 'sensor')
+    if (l.type === 'sensor' || l.type === 'clock')
       put(propsPanel,
         h('details', { class: 'advanced', open: advancedOpen, ontoggle: (e) => (advancedOpen = e.target.open) },
           h('summary', {}, 'Avanzado'),
@@ -329,6 +345,38 @@ export function startEditor({ onData, hasRealData }) {
           ),
         ),
       );
+  }
+
+  function shapeControls(l) {
+    const kind = l.shape || 'rect';
+    const picker = h('div', { class: 'seg', role: 'radiogroup' },
+      ...SHAPES.map(([k, label]) =>
+        h('button', {
+          type: 'button', class: 'seg-btn' + (k === kind ? ' on' : ''), 'aria-pressed': String(k === kind),
+          onclick: () => { if (k !== kind) (l.shape = k), commit({ list: true, props: true }); },
+        }, svgIcon(k), label)));
+    if (kind === 'line')
+      return [
+        field('Forma', picker),
+        h('div', { class: 'grid2' },
+          field('Largo', slider(l, 'w', 1, 480, 1, 'px')),
+          field('Grosor', slider(l, 'thickness', 1, 40, 1, 'px')),
+          field('Color', color(l, 'fill')),
+          field('Extremos', select(l, 'cap', [['round', 'Redondos'], ['square', 'Rectos']])),
+        ),
+      ];
+    return [
+      field('Forma', picker),
+      h('div', { class: 'grid2' },
+        field('Ancho', slider(l, 'w', 1, 480, 1, 'px')),
+        field('Alto', slider(l, 'h', 1, 480, 1, 'px')),
+        field('Relleno', color(l, 'fill')),
+        field('Opacidad del relleno', slider(l, 'fillOpacity', 0, 1, 0.01)),
+        field('Borde', color(l, 'borderColor')),
+        field('Grosor del borde', slider(l, 'borderWidth', 0, 30, 1, 'px')),
+        kind === 'rect' ? field('Esquinas', slider(l, 'radius', 0, 240, 1, 'px')) : null,
+      ),
+    ];
   }
 
   function textControls(l) {

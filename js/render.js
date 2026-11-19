@@ -1,6 +1,6 @@
 // Dibuja un preset en un contenedor. Lo usan tanto la pantalla del Kraken como la vista previa del editor.
 import { getMedia } from './state.js';
-import { formatMetric } from './sensors.js';
+import { formatMetric, formatClock } from './sensors.js';
 
 const loadedFonts = new Set();
 const SYSTEM_FONTS = new Set(['system-ui', 'sans-serif', 'serif', 'monospace', 'Arial', 'Georgia', 'Impact', 'Verdana', 'Courier New', 'Segoe UI']);
@@ -30,7 +30,9 @@ export function resolveMediaUrl(url) {
   return { url: u };
 }
 
-export function createRenderer(container, { onMediaStatus } = {}) {
+export function createRenderer(container, { onMediaStatus: notify } = {}) {
+  let mediaStatus = {};
+  const onMediaStatus = (st) => ((mediaStatus = st), notify?.(st));
   const canvas = document.createElement('div');
   canvas.className = 'cl-canvas';
   const bgWrap = document.createElement('div');
@@ -58,6 +60,7 @@ export function createRenderer(container, { onMediaStatus } = {}) {
     const key = `${bg.source}|${bg.source === 'url' ? bg.url : bg.mediaId}`;
     if (key !== bgKey) {
       bgKey = key;
+      mediaStatus = {};
       bgWrap.innerHTML = '';
       bgEl = null;
       if (objectUrl) URL.revokeObjectURL(objectUrl), (objectUrl = null);
@@ -117,11 +120,21 @@ export function createRenderer(container, { onMediaStatus } = {}) {
     el.style.opacity = l.opacity ?? 1;
     el.style.display = l.visible === false ? 'none' : '';
     if (l.type === 'shape') {
-      el.style.width = l.w + 'px';
-      el.style.height = l.h + 'px';
-      el.style.borderRadius = Math.min(l.radius || 0, Math.min(l.w, l.h) / 2) + 'px';
-      el.style.background = hexA(l.fill, l.fillOpacity ?? 1);
-      el.style.border = l.borderWidth ? `${l.borderWidth}px solid ${l.borderColor}` : 'none';
+      const kind = l.shape || 'rect';
+      // la línea usa solo la opacidad de la capa (sin opacidad de relleno aparte)
+      el.style.background = hexA(l.fill, kind === 'line' ? 1 : l.fillOpacity ?? 1);
+      if (kind === 'line') {
+        const t = Math.max(1, l.thickness || 1);
+        el.style.width = l.w + 'px';
+        el.style.height = t + 'px';
+        el.style.borderRadius = l.cap === 'square' ? '0' : t / 2 + 'px';
+        el.style.border = 'none';
+      } else {
+        el.style.width = l.w + 'px';
+        el.style.height = l.h + 'px';
+        el.style.borderRadius = kind === 'ellipse' ? '50%' : Math.min(l.radius || 0, Math.min(l.w, l.h) / 2) + 'px';
+        el.style.border = l.borderWidth ? `${l.borderWidth}px solid ${l.borderColor}` : 'none';
+      }
     } else {
       ensureFont(l.font);
       el.style.fontFamily = `"${l.font}", system-ui, sans-serif`;
@@ -136,8 +149,19 @@ export function createRenderer(container, { onMediaStatus } = {}) {
   }
 
   function textOf(l) {
-    return l.type === 'sensor' ? formatMetric(l, data) : l.text;
+    if (l.type === 'sensor') return formatMetric(l, data);
+    if (l.type === 'clock') return formatClock(l);
+    return l.text;
   }
+  function refreshLive(types) {
+    if (!preset) return;
+    for (const l of preset.layers) if (types.includes(l.type)) {
+      const el = nodes.get(l.id);
+      if (el) el.textContent = textOf(l);
+    }
+  }
+  // El reloj avanza por su cuenta, aunque CAM no mande datos.
+  setInterval(() => refreshLive(['clock']), 1000);
 
   function setPreset(p) {
     preset = p;
@@ -163,14 +187,10 @@ export function createRenderer(container, { onMediaStatus } = {}) {
 
   function setData(d) {
     data = d || {};
-    if (!preset) return;
-    for (const l of preset.layers) if (l.type === 'sensor') {
-      const el = nodes.get(l.id);
-      if (el) el.textContent = textOf(l);
-    }
+    refreshLive(['sensor']);
   }
 
-  return { canvas, setPreset, setData, setScale, nodeFor: (id) => nodes.get(id) };
+  return { canvas, setPreset, setData, setScale, nodeFor: (id) => nodes.get(id), mediaStatus: () => mediaStatus };
 }
 
 function hexA(hex, a) {

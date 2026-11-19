@@ -16,9 +16,14 @@ export const METRICS = [
   { id: 'ram_used', label: 'Uso de memoria', group: 'RAM', kind: 'ram', get: (d) => ram(d) },
   { id: 'ram_free', label: 'Memoria libre', group: 'RAM', kind: 'ram', get: (d) => ramFree(d) },
   { id: 'ram_total', label: 'Memoria total', group: 'RAM', kind: 'ramsize', get: (d) => d.ram?.totalSize },
-  { id: 'time', label: 'Hora', group: 'Reloj', kind: 'time', get: () => new Date() },
-  { id: 'date', label: 'Fecha', group: 'Reloj', kind: 'date', get: () => new Date() },
 ];
+
+// Capa "Reloj": hora o fecha local, con los formatos de FORMATS.time / FORMATS.date.
+export const CLOCKS = [
+  { id: 'time', label: 'Hora' },
+  { id: 'date', label: 'Fecha' },
+];
+export const clockById = (id) => CLOCKS.find((c) => c.id === id) || CLOCKS[0];
 
 function ratio(v) {
   return typeof v === 'number' ? v * 100 : undefined;
@@ -134,6 +139,12 @@ export function formatMetric(layer, data) {
   const empty = v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v));
   const body = empty ? '--' : fmt.f(v, { unit: layer.unit || 'C' });
   return `${layer.prefix || ''}${body}${layer.suffix || ''}`;
+}
+
+export function formatClock(layer, now = new Date()) {
+  const list = formatsFor(clockById(layer.clock).id);
+  const fmt = list.find((f) => f.id === layer.format) || list[0];
+  return `${layer.prefix || ''}${fmt.f(now)}${layer.suffix || ''}`;
 }
 
 // Datos de demostración para cuando no estamos dentro de CAM.

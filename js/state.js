@@ -3,6 +3,7 @@
 
 const KEY = 'coffeeless.state.v1';
 export const BASE = 240; // tamaño lógico de diseño (Kraken Plus: 240×240)
+export const SCHEMA = 2; // versión del esquema de preset (ver migratePreset)
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -10,10 +11,36 @@ export function newLayer(type, extra = {}) {
   const common = { id: uid(), type, name: '', x: BASE / 2, y: BASE / 2, rotate: 0, opacity: 1, visible: true, locked: false };
   if (type === 'sensor')
     return { ...common, metric: 'cpu_temp', format: 'd0u', unit: 'C', prefix: '', suffix: '', ...textStyle(), ...extra };
+  if (type === 'clock') return { ...common, clock: 'time', format: 'HHmm', prefix: '', suffix: '', ...textStyle(), ...extra };
   if (type === 'text') return { ...common, text: 'Texto', ...textStyle(), ...extra };
-  if (type === 'shape')
-    return { ...common, w: 120, h: 40, radius: 8, fill: '#000000', fillOpacity: 0.6, borderColor: '#ffffff', borderWidth: 0, ...extra };
+  if (type === 'shape') return { ...common, ...shapeDefaults(), ...extra };
   throw new Error('tipo desconocido ' + type);
+}
+
+function shapeDefaults() {
+  return {
+    shape: 'rect', // 'rect' | 'ellipse' | 'line'
+    w: 120, h: 40, radius: 8,
+    fill: '#000000', fillOpacity: 0.6,
+    borderColor: '#ffffff', borderWidth: 0,
+    thickness: 3, cap: 'round', // solo línea (el color es fill/fillOpacity, el largo es w)
+  };
+}
+
+// Lleva un preset de cualquier versión anterior al esquema actual. Idempotente.
+// v1 → v2: hora/fecha pasan de "sensor" a su propio tipo "clock"; las formas reciben `shape` y campos de línea.
+export function migratePreset(p) {
+  if (!p || (p.schema || 1) >= SCHEMA) return p;
+  p.layers = (p.layers || []).map((l) => {
+    if (l.type === 'sensor' && (l.metric === 'time' || l.metric === 'date')) {
+      const { metric, unit, ...rest } = l;
+      return { ...rest, type: 'clock', clock: metric };
+    }
+    if (l.type === 'shape') return { ...shapeDefaults(), ...l, shape: l.shape || 'rect' };
+    return l;
+  });
+  p.schema = SCHEMA;
+  return p;
 }
 
 function textStyle() {
@@ -34,6 +61,7 @@ export function newPreset(name = 'Mi pantalla') {
   return {
     id: uid(),
     name,
+    schema: SCHEMA,
     size: BASE,
     bg: { source: 'none', color: '#000000', url: '', mediaId: null, mediaName: '', fit: 'cover', scale: 1, rotate: 0, offsetX: 0, offsetY: 0, opacity: 1 },
     layers: [
@@ -48,7 +76,10 @@ export function loadState() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && Array.isArray(s.presets) && s.presets.length) return s;
+      if (s && Array.isArray(s.presets) && s.presets.length) {
+        s.presets.forEach(migratePreset);
+        return s;
+      }
     }
   } catch {}
   const p = newPreset();
@@ -118,12 +149,13 @@ export async function exportPreset(preset) {
     const blob = await getMedia(out.bg.mediaId);
     if (blob) out.bg.embedded = await blobToDataURL(blob);
   }
-  return { app: 'coffeeless', version: 1, preset: out };
+  return { app: 'coffeeless', version: SCHEMA, preset: out };
 }
 
 export async function importPreset(json) {
   const p = json?.preset || json;
   if (!p || !Array.isArray(p.layers) || !p.bg) throw new Error('El archivo no es un preset válido');
+  migratePreset(p);
   p.id = uid();
   p.layers.forEach((l) => (l.id = uid()));
   if (p.bg.embedded) {
