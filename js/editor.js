@@ -3,15 +3,9 @@ import { loadState, saveState, activePreset, newPreset, newLayer, putMedia, dele
 import { createRenderer, ensureFont, resolveMediaUrl } from './render.js';
 import { icon as svgIcon } from './icons.js';
 import { createDiagnostics } from './diag.js';
+import { createFontPicker } from './fontpicker.js';
 import { METRICS, metricById, formatsFor, CLOCKS, clockById } from './sensors.js';
 
-const FONTS = [
-  'Inter', 'Fasthand', 'Freehand', 'Rye', 'Ultra', 'Abril Fatface', 'Bebas Neue', 'Anton', 'Oswald', 'Teko', 'Rajdhani',
-  'Orbitron', 'Audiowide', 'Michroma', 'Syncopate', 'Unbounded', 'Russo One', 'Black Ops One', 'Bungee', 'Monoton',
-  'Righteous', 'Rubik Mono One', 'Press Start 2P', 'Silkscreen', 'VT323', 'Share Tech Mono', 'Major Mono Display',
-  'Space Mono', 'Space Grotesk', 'JetBrains Mono', 'Roboto Mono', 'Montserrat', 'Poppins', 'Roboto', 'Exo 2', 'Saira',
-  'Permanent Marker', 'Caveat', 'Pacifico', 'Lobster', 'Cinzel', 'Playfair Display', 'DM Serif Display', 'UnifrakturMaguntia',
-];
 
 const PREVIEW = 360; // px en pantalla para la vista previa
 const BG = '__bg'; // id de selección del fondo
@@ -467,12 +461,10 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   }
 
   function textControls(l) {
-    const fontInput = h('input', { type: 'text', list: 'font-list', value: l.font });
-    const applyFont = () => { const v = fontInput.value.trim(); if (v) { l.font = v; ensureFont(v); commit(); } };
-    fontInput.addEventListener('change', applyFont);
+    const fontPicker = createFontPicker({ value: l.font, onChange: (v) => { l.font = v; ensureFont(v); commit(); } });
     return [
       h('div', { class: 'grid2' },
-        field(h('span', {}, 'Fuente ', h('a', { href: 'https://fonts.google.com/', target: '_blank', rel: 'noopener' }, '(Google Fonts)')), fontInput),
+        field(h('span', {}, 'Fuente ', h('a', { href: 'https://fonts.google.com/', target: '_blank', rel: 'noopener' }, '(Google Fonts)')), fontPicker, 'div'),
         field('Grosor', select(l, 'weight', [300, 400, 500, 600, 700, 800, 900].map((w) => [w, String(w)]), null, Number)),
         field('Tamaño', slider(l, 'size', 6, 200, 1, 'px')),
         field('Color', color(l, 'color')),
@@ -486,9 +478,10 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   }
 
   // ---------- controles genéricos ----------
-  function field(label, control) {
+  // tag 'div' para controles compuestos (un <label> reenviaría los clics al primer input)
+  function field(label, control, tag = 'label') {
     if (!control) return null;
-    return h('label', { class: 'field' }, h('span', { class: 'flabel' }, label), control);
+    return h(tag, { class: 'field' }, h('span', { class: 'flabel' }, label), control);
   }
   function text(obj, key, after) {
     return h('input', { type: 'text', value: obj[key] ?? '', oninput: (e) => { obj[key] = e.target.value; commit(); after?.(); } });
@@ -651,8 +644,6 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   }
 
   // ---------- inicio ----------
-  const dl = h('datalist', { id: 'font-list' }, ...FONTS.map((f) => h('option', { value: f })));
-  document.body.append(dl);
 
   function refreshAll() {
     renderPresetSelect();

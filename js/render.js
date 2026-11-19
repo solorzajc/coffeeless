@@ -1,16 +1,26 @@
 // Dibuja un preset en un contenedor. Lo usan tanto la pantalla del Kraken como la vista previa del editor.
 import { getMedia } from './state.js';
 import { formatMetric, formatClock } from './sensors.js';
+import { FONT_CATALOG } from './fonts.js';
 
 const loadedFonts = new Set();
 const SYSTEM_FONTS = new Set(['system-ui', 'sans-serif', 'serif', 'monospace', 'Arial', 'Georgia', 'Impact', 'Verdana', 'Courier New', 'Segoe UI']);
+
+let weightsOf;
+// Pesos a pedir: rango completo si es variable ("100..900"), lista si son estáticos ("400;700").
+function weightSpec(family) {
+  weightsOf ??= new Map(FONT_CATALOG.map((f) => [f[0], f[2]]));
+  const w = weightsOf.get(family);
+  return w && w !== '400' ? `:wght@${w}` : '';
+}
+export const isFontLoaded = (family) => loadedFonts.has(family);
 
 export function ensureFont(family) {
   if (!family || loadedFonts.has(family) || SYSTEM_FONTS.has(family)) return;
   loadedFonts.add(family);
   const link = document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}&display=swap`;
+  link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}${weightSpec(family)}&display=swap`;
   document.head.appendChild(link);
 }
 ensureFont('Inter'); // fuente por defecto, también desde Google Fonts
