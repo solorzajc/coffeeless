@@ -17,19 +17,16 @@ ensureFont('Inter'); // fuente por defecto, también desde Google Fonts
 
 const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
 
-// Convierte enlaces conocidos en una URL directa de archivo.
+export const UNUSABLE_URL_MSG = 'Este enlace no se puede usar como fondo. Prueba con otro, o descarga el archivo y súbelo desde "Archivo de mi PC".';
+
+// Descarta enlaces que sabemos que no funcionan desde una página estática.
+// Páginas de pin y videos HLS (.m3u8): solo existen como HLS y están bloqueados por CORS (confirmado).
 export function resolveMediaUrl(url) {
   const u = (url || '').trim();
   if (!u) return { url: '' };
-  if (/pinterest\.[a-z.]+\/pin\//i.test(u) || /pin\.it\//i.test(u))
-    return {
-      url: '',
-      error: 'Ese es el enlace de la página del pin, no del archivo. Abre el pin, clic derecho sobre el GIF → "Copiar dirección de imagen" (o del video) y pega esa URL.',
-    };
-  // Videos de Pinterest en HLS (.m3u8): Chromium no los reproduce; la versión MP4 suele existir en /720p/
-  const hls = u.match(/^(https?:\/\/v\d?\.pinimg\.com\/videos\/[^/]+)\/hls\/(.+)\.m3u8/i);
-  if (hls) return { url: `${hls[1]}/720p/${hls[2]}.mp4`, note: 'Convertí el video HLS de Pinterest a su versión MP4.' };
-  if (/\.m3u8(\?|$)/i.test(u)) return { url: u, error: 'Los videos .m3u8 (HLS) no se pueden reproducir aquí; usa un enlace .mp4, .webm o .gif.' };
+  const unusable =
+    /pinterest\.[a-z.]+\/pin\//i.test(u) || /(^|\/\/)pin\.it\//i.test(u) || /\.m3u8(\?|#|$)/i.test(u) || /\/\/v\d*\.pinimg\.com\/videos\//i.test(u);
+  if (unusable) return { url: '', error: UNUSABLE_URL_MSG };
   return { url: u };
 }
 

@@ -1,6 +1,7 @@
 // Editor: corre en la ventana de configuración de CAM (o en cualquier navegador para diseñar).
 import { loadState, saveState, activePreset, newPreset, newLayer, putMedia, deleteMedia, exportPreset, importPreset, uid } from './state.js';
-import { createRenderer, ensureFont } from './render.js';
+import { createRenderer, ensureFont, resolveMediaUrl } from './render.js';
+import { icon as svgIcon } from './icons.js';
 import { METRICS, metricById, formatsFor } from './sensors.js';
 
 const FONTS = [
@@ -18,6 +19,8 @@ export function startEditor({ onData, hasRealData }) {
   let preset = activePreset(state);
   let selectedId = null;
   let showGuide = true;
+  let advancedOpen = false;
+  let propsLayerId = null;
 
   const app = document.getElementById('app');
   app.innerHTML = '';
@@ -51,6 +54,7 @@ export function startEditor({ onData, hasRealData }) {
     frame,
     h('div', { class: 'stage-tools' },
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { showGuide = e.target.checked; guide.hidden = !showGuide; } }), ' Guía del borde de la bomba (solo en el editor)'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico en el Kraken (datos, resolución, fuentes, fondo)'),
     ),
     mediaMsg,
     h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar.'),
@@ -163,7 +167,14 @@ export function startEditor({ onData, hasRealData }) {
       },
     });
     const urlInput = h('input', { type: 'url', placeholder: 'https://…gif / .png / .mp4', value: bg.url || '' });
-    const applyUrl = () => { bg.url = urlInput.value.trim(); bg.source = 'url'; mediaMsg.textContent = ''; commit(); renderBg(); };
+    const applyUrl = () => {
+      bg.url = urlInput.value.trim();
+      bg.source = 'url';
+      const r = resolveMediaUrl(bg.url);
+      showMediaStatus(r.error ? { error: r.error } : { ok: true });
+      commit();
+      renderBg();
+    };
     urlInput.addEventListener('change', applyUrl);
 
     bgPanel.innerHTML = '';
@@ -194,7 +205,6 @@ export function startEditor({ onData, hasRealData }) {
   }
 
   // ---------- capas ----------
-  const icon = { sensor: '∿', text: 'A', shape: '▢' };
   const labelOf = (l) => l.name || (l.type === 'sensor' ? metricById(l.metric).label : l.type === 'text' ? l.text : 'Forma');
 
   function renderLayerList() {
@@ -204,19 +214,19 @@ export function startEditor({ onData, hasRealData }) {
       const idx = preset.layers.indexOf(l);
       layerList.append(
         h('div', { class: 'layer' + (l.id === selectedId ? ' sel' : '') + (l.visible === false ? ' hidden-layer' : ''), onclick: () => selectLayer(l.id) },
-          h('span', { class: 'ico' }, icon[l.type]),
+          h('span', { class: 'ico' }, svgIcon(l.type)),
           h('span', { class: 'lname' }, labelOf(l)),
-          ibtn(l.visible === false ? '◌' : '◉', 'Mostrar/ocultar', () => ((l.visible = l.visible === false), commit({ list: true }))),
-          ibtn(l.locked ? '🔒' : '🔓', 'Bloquear', () => ((l.locked = !l.locked), commit({ list: true }))),
-          ibtn('↑', 'Subir', () => move(idx, 1)),
-          ibtn('↓', 'Bajar', () => move(idx, -1)),
-          ibtn('⧉', 'Duplicar', () => {
+          ibtn(l.visible === false ? 'eyeOff' : 'eye', l.visible === false ? 'Mostrar' : 'Ocultar', () => ((l.visible = l.visible === false), commit({ list: true }))),
+          ibtn(l.locked ? 'lock' : 'unlock', l.locked ? 'Desbloquear' : 'Bloquear', () => ((l.locked = !l.locked), commit({ list: true }))),
+          ibtn('up', 'Subir', () => move(idx, 1)),
+          ibtn('down', 'Bajar', () => move(idx, -1)),
+          ibtn('copy', 'Duplicar', () => {
             const c = { ...clone(l), id: uid(), x: l.x + 8, y: l.y + 8 };
             preset.layers.splice(idx + 1, 0, c);
             selectedId = c.id;
             commit({ list: true, props: true });
           }),
-          ibtn('✕', 'Eliminar', () => removeLayer(l.id)),
+          ibtn('trash', 'Eliminar', () => removeLayer(l.id)),
         ),
       );
     });
@@ -251,13 +261,14 @@ export function startEditor({ onData, hasRealData }) {
   // ---------- propiedades ----------
   function renderProps() {
     const l = selected();
+    if (l?.id !== propsLayerId) (propsLayerId = l?.id), (advancedOpen = false);
     propsPanel.innerHTML = '';
     if (!l) {
       put(propsPanel, h('div', { class: 'card-title' }, 'Propiedades'), h('p', { class: 'muted' }, 'Selecciona una capa para editarla.'));
       return;
     }
     const up = () => commit({ list: true });
-    put(propsPanel, h('div', { class: 'card-title' }, `${icon[l.type]} ${labelOf(l)}`));
+    put(propsPanel, h('div', { class: 'card-title with-ico' }, svgIcon(l.type), labelOf(l)));
     put(propsPanel, field('Nombre (opcional)', text(l, 'name', up)));
 
     if (l.type === 'sensor') {
@@ -277,8 +288,6 @@ export function startEditor({ onData, hasRealData }) {
           field('Sensor', metricSel),
           field('Formato', select(l, 'format', formatsFor(kind).map((f) => [f.id, f.ex]))),
           kind === 'temp' ? field('Unidad', select(l, 'unit', [['C', 'Celsius (°C)'], ['F', 'Fahrenheit (°F)']])) : null,
-          field('Antes del valor', text(l, 'prefix')),
-          field('Después del valor', text(l, 'suffix')),
         ),
       );
     }
@@ -308,6 +317,18 @@ export function startEditor({ onData, hasRealData }) {
         btn('Centrar vertical', () => ((l.y = preset.size / 2), commit({ props: true }))),
       ),
     );
+    // "Avanzado" siempre al final de la capa, contraído al cambiar de capa
+    if (l.type === 'sensor')
+      put(propsPanel,
+        h('details', { class: 'advanced', open: advancedOpen, ontoggle: (e) => (advancedOpen = e.target.open) },
+          h('summary', {}, 'Avanzado'),
+          h('p', { class: 'muted' }, 'Para etiquetas como “CPU” es mejor usar una capa de texto aparte.'),
+          h('div', { class: 'grid2' },
+            field('Texto antes del valor', text(l, 'prefix')),
+            field('Texto después del valor', text(l, 'suffix')),
+          ),
+        ),
+      );
   }
 
   function textControls(l) {
@@ -434,8 +455,8 @@ function h(tag, attrs = {}, ...children) {
 function btn(label, fn, cls = '') {
   return h('button', { type: 'button', class: 'btn ' + cls, onclick: fn }, label);
 }
-function ibtn(label, title, fn) {
-  return h('button', { type: 'button', class: 'ibtn', title, onclick: (e) => { e.stopPropagation(); fn(); } }, label);
+function ibtn(name, title, fn) {
+  return h('button', { type: 'button', class: 'ibtn', title, 'aria-label': title, onclick: (e) => { e.stopPropagation(); fn(); } }, svgIcon(name));
 }
 const put = (el, ...c) => el.append(...c.flat().filter((x) => x !== null && x !== undefined && x !== false));
 const clone = (o) => JSON.parse(JSON.stringify(o));
