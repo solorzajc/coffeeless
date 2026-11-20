@@ -9,7 +9,16 @@ import { METRICS, metricById, formatsFor, CLOCKS, clockById } from './sensors.js
 
 const PREVIEW = 360; // px en pantalla para la vista previa
 const BG = '__bg'; // id de selección del fondo
-const WEIGHT_NAMES = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
+const MAX_RECENT = 8; // colores recientes
+// Preferencias del editor (por navegador, no van en el preset). localStorage puede fallar: se ignora.
+const PREF_KEY = 'coffeeless.editor.v1';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch { return {}; }
+}
+function savePref(k, v) {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ ...loadPrefs(), [k]: v })); } catch {}
+}
+const WEIGHT_NAMES ={ 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
 
 export function startEditor({ onData, hasRealData, getLastData }) {
   let state = loadState();
@@ -20,6 +29,9 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   let showGuide = true;
   let advancedOpen = false;
   let propsLayerId = null;
+  const prefs = loadPrefs();
+  let recentColors = Array.isArray(prefs.recentColors) ? prefs.recentColors : [];
+  let magnet = prefs.magnet !== false;
 
   const app = document.getElementById('app');
   app.innerHTML = '';
@@ -42,20 +54,27 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   const stage = h('div', { class: 'stage' });
   const frame = h('div', { class: 'frame', style: `width:${PREVIEW}px;height:${PREVIEW}px` });
   const guide = h('div', { class: 'guide' });
-  const selBox = h('div', { class: 'selbox' }, h('span', { class: 'selbox-lock' }, svgIcon('lock')));
+  // Asas: esquinas = escala (formas: ancho y alto libres, Shift mantiene proporción); lados = un solo eje (solo formas).
+  const HANDLES = { nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0] };
+  const handleEls = Object.entries(HANDLES).map(([k, [hx, hy]]) =>
+    h('div', { class: 'hdl hdl-' + k, 'data-h': k, onpointerdown: (e) => startResize(e, hx, hy) }));
+  const selBox = h('div', { class: 'selbox' }, h('span', { class: 'selbox-lock' }, svgIcon('lock')), ...handleEls);
   const rotHandle = h('div', { class: 'rot-handle', title: 'Arrastra para rotar el fondo', hidden: true });
   const snapV = h('div', { class: 'snap-guide v', hidden: true });
   const snapH = h('div', { class: 'snap-guide h', hidden: true });
   frame.append(guide, selBox, rotHandle, snapV, snapH);
+  // margen alrededor del lienzo: la selección y las asas pueden salirse un poco, pero nunca tapan los paneles
+  const viewport = h('div', { class: 'viewport' }, frame);
   const mediaMsg = h('div', { class: 'media-msg' });
   stage.append(
-    frame,
+    viewport,
     h('div', { class: 'stage-tools' },
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: magnet, onchange: (e) => { magnet = e.target.checked; savePref('magnet', magnet); } }), ' Imán: alinear con el lienzo y otras capas (Alt lo invierte)'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { showGuide = e.target.checked; guide.hidden = !showGuide; } }), ' Guía del borde de la bomba (solo en el editor)'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico (en el Kraken y en esta vista previa)'),
     ),
     mediaMsg,
-    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa. Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan. Al arrastrar se alinea con el lienzo y otras capas (Alt: sin imán).'),
+    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa; las asas de las esquinas cambian el tamaño (en formas, Shift mantiene la proporción). Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan.'),
     h('p', { class: 'hint' }, 'Con «Fondo» seleccionado en Capas: arrastra para moverlo, rueda para escalar, Shift+arrastrar o el asa de arriba para rotar.'),
   );
 
@@ -508,13 +527,34 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   // tag 'div' para controles compuestos (un <label> reenviaría los clics al primer input)
   function field(label, control, tag = 'label') {
     if (!control) return null;
+    if (control.classList?.contains('color-field')) tag = 'div';
     return h(tag, { class: 'field' }, h('span', { class: 'flabel' }, label), control);
   }
   function text(obj, key, after) {
     return h('input', { type: 'text', value: obj[key] ?? '', oninput: (e) => { obj[key] = e.target.value; commit(); after?.(); } });
   }
+  // Selector de color + fila de colores recientes (compartidos entre todos los selectores).
   function color(obj, key) {
-    return h('input', { type: 'color', value: obj[key] || '#000000', oninput: (e) => { obj[key] = e.target.value; commit(); } });
+    const input = h('input', {
+      type: 'color', value: obj[key] || '#000000',
+      oninput: (e) => { obj[key] = e.target.value; commit(); },
+      onchange: (e) => pushRecentColor(e.target.value), // al cerrar el selector
+    });
+    const row = h('div', { class: 'swatches' });
+    row._fill = () => row.replaceChildren(...recentColors.map((c) =>
+      h('button', {
+        type: 'button', class: 'swatch' + (c === (obj[key] || '').toLowerCase() ? ' on' : ''), style: `background:${c}`, title: c, 'aria-label': c,
+        onmousedown: (e) => e.preventDefault(),
+        onclick: () => { obj[key] = c; input.value = c; commit(); pushRecentColor(c); },
+      })));
+    row._fill();
+    return h('div', { class: 'color-field' }, input, row);
+  }
+  function pushRecentColor(c) {
+    c = c.toLowerCase();
+    recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, MAX_RECENT);
+    savePref('recentColors', recentColors);
+    document.querySelectorAll('.swatches').forEach((r) => r._fill?.());
   }
   function select(obj, key, options, after, cast = (v) => v) {
     return h('select', { onchange: (e) => { obj[key] = cast(e.target.value); commit(); after?.(); } },
@@ -589,10 +629,14 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     const bg = preset.bg;
     if (drag.mode === 'layer') {
       let nx = drag.x + dx * PX(), ny = drag.y + dy * PX();
-      if (!e.altKey) ({ nx, ny } = snap(drag.snap, nx, ny));
+      let sx = null, sy = null;
+      if (magnet !== e.altKey) ({ sx, sy } = snap(drag.snap, nx, ny));
       else hideGuides();
-      drag.l.x = Math.round(nx);
-      drag.l.y = Math.round(ny);
+      // alineado: posición exacta (puede caer en medio píxel); suelto: entero
+      drag.l.x = sx ? +sx.pos.toFixed(2) : Math.round(nx);
+      drag.l.y = sy ? +sy.pos.toFixed(2) : Math.round(ny);
+    } else if (drag.mode === 'resize') {
+      resizeMove(drag, e, dx * PX(), dy * PX());
     } else if (drag.mode === 'bg') {
       bg.offsetX = clamp(+(drag.x + dx / PREVIEW).toFixed(3), -1, 1);
       bg.offsetY = clamp(+(drag.y + dy / PREVIEW).toFixed(3), -1, 1);
@@ -601,53 +645,171 @@ export function startEditor({ onData, hasRealData, getLastData }) {
     }
     commit();
   }
-  // ---------- snapping: bordes y centro del lienzo, y bordes/centros de las otras capas ----------
-  const SNAP_PX = 5; // tolerancia en px de pantalla
+  // ---------- geometría de las capas ----------
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  // Caja de una capa sin rotar, relativa a su centro, en px de diseño. Es la misma caja para la selección,
+  // las asas y el imán. En textos es la caja de la tinta (lo que se ve), no la caja de línea, que según la
+  // fuente trae aire arriba y abajo.
+  function localBox(l) {
+    const el = renderer.nodeFor(l.id);
+    if (!el) return null;
+    let W = el.offsetWidth, H = el.offsetHeight;
+    const box = { x0: -W / 2, y0: -H / 2, x1: W / 2, y1: H / 2 };
+    if (l.type === 'shape') return box;
+    const txt = el.textContent;
+    if (!txt || txt.includes('\n')) return box;
+    measureCtx.font = `${l.weight} ${l.size}px "${l.font}", system-ui, sans-serif`;
+    measureCtx.letterSpacing = (l.letterSpacing || 0) + 'px';
+    const m = measureCtx.measureText(txt);
+    const fa = m.fontBoundingBoxAscent, fd = m.fontBoundingBoxDescent;
+    if (!(fa + fd) || !(m.actualBoundingBoxLeft + m.actualBoundingBoxRight)) return box;
+    // medidas sin redondear y sin esperar al DOM (al escalar con las asas el DOM aún no se actualizó)
+    (W = m.width), (H = l.size);
+    const base = -H / 2 + (H - (fa + fd)) / 2 + fa; // línea base (line-height: 1)
+    const pad = (l.strokeWidth || 0) / 2; // el contorno engorda la tinta
+    return {
+      x0: -W / 2 - m.actualBoundingBoxLeft - pad, x1: -W / 2 + m.actualBoundingBoxRight + pad,
+      y0: base - m.actualBoundingBoxAscent - pad, y1: base + m.actualBoundingBoxDescent + pad,
+    };
+  }
+  const rad = (d) => ((d || 0) * Math.PI) / 180;
+  // Caja alineada a los ejes del lienzo de una capa ya rotada.
+  function worldBox(l, b = localBox(l)) {
+    if (!b) return null;
+    const a = rad(l.rotate), c = Math.cos(a), s = Math.sin(a);
+    const xs = [], ys = [];
+    for (const [px, py] of [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]]) {
+      xs.push(l.x + px * c - py * s);
+      ys.push(l.y + px * s + py * c);
+    }
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  }
+
+  // ---------- imán ----------
+  // Destinos: bordes y centro del lienzo, y bordes/centros de las otras capas visibles que caigan dentro del lienzo.
+  // Cada destino tiene un peso: cuanto mayor, más hay que acercarse. Así el lienzo (y su centro) gana cuando compiten
+  // con otras capas, y las capas solo atraen cuando de verdad estás cerca.
+  const SNAP_PX = 6; // tolerancia en px de pantalla para el lienzo
+  const W_CANVAS = 1, W_CENTER = 0.8, W_LAYER = 1.6;
   function snapContext(l) {
     const size = preset.size;
-    const k = PX();
-    const cr = renderer.canvas.getBoundingClientRect();
-    const box = (el) => {
-      const r = el.getBoundingClientRect();
-      const x0 = (r.left - cr.left) * k, y0 = (r.top - cr.top) * k, w = r.width * k, hh = r.height * k;
-      return { xs: [x0, x0 + w / 2, x0 + w], ys: [y0, y0 + hh / 2, y0 + hh], w, h: hh };
-    };
-    const xs = [0, size / 2, size], ys = [0, size / 2, size];
+    const inside = (v) => v >= -0.5 && v <= size + 0.5;
+    const full = [0, size];
+    const canvasT = () => [{ v: 0, w: W_CANVAS, span: full }, { v: size / 2, w: W_CENTER, span: full }, { v: size, w: W_CANVAS, span: full }];
+    const tx = canvasT(), ty = canvasT();
     for (const o of preset.layers) {
       if (o.id === l.id || o.visible === false) continue;
-      const el = renderer.nodeFor(o.id);
-      if (!el) continue;
-      const b = box(el);
-      xs.push(...b.xs);
-      ys.push(...b.ys);
+      const b = worldBox(o);
+      if (!b) continue;
+      for (const v of [b.x0, (b.x0 + b.x1) / 2, b.x1]) if (inside(v)) tx.push({ v, w: W_LAYER, span: [b.y0, b.y1] });
+      for (const v of [b.y0, (b.y0 + b.y1) / 2, b.y1]) if (inside(v)) ty.push({ v, w: W_LAYER, span: [b.x0, b.x1] });
     }
-    const self = renderer.nodeFor(l.id);
-    const b = self ? box(self) : { w: 0, h: 0 };
-    return { xs, ys, hw: b.w / 2, hh: b.h / 2 };
+    const b = worldBox(l) || { x0: l.x, x1: l.x, y0: l.y, y1: l.y };
+    // borde izq./centro/der. (y sup./centro/inf.) respecto a la posición de la capa
+    return {
+      tx, ty,
+      ox: [b.x0 - l.x, (b.x0 + b.x1) / 2 - l.x, b.x1 - l.x],
+      oy: [b.y0 - l.y, (b.y0 + b.y1) / 2 - l.y, b.y1 - l.y],
+    };
   }
-  // la capa se ancla en su centro: se prueban su borde izq./sup., centro y borde der./inf.
-  function snapAxis(pos, half, targets, thr) {
+  function snapAxis(pos, offs, targets) {
+    const thr = SNAP_PX * PX();
     let best = null;
-    for (const off of [-half, 0, half])
+    for (const off of offs)
       for (const t of targets) {
-        const d = Math.abs(pos + off - t);
-        if (d <= thr && (!best || d < best.d)) best = { d, pos: t - off, line: t };
+        const d = Math.abs(pos + off - t.v) * t.w;
+        if (d <= thr && (!best || d < best.d)) best = { d, pos: t.v - off, line: t.v, span: t.span };
       }
     return best;
   }
   function snap(ctx, nx, ny) {
-    const thr = SNAP_PX * PX();
-    const sx = snapAxis(nx, ctx.hw, ctx.xs, thr);
-    const sy = snapAxis(ny, ctx.hh, ctx.ys, thr);
-    showSnapLine(snapV, sx && sx.line, 'left');
-    showSnapLine(snapH, sy && sy.line, 'top');
-    return { nx: sx ? sx.pos : nx, ny: sy ? sy.pos : ny };
+    const sx = snapAxis(nx, ctx.ox, ctx.tx);
+    const sy = snapAxis(ny, ctx.oy, ctx.ty);
+    const px = sx ? sx.pos : nx, py = sy ? sy.pos : ny;
+    showSnapLine(snapV, sx, [py + ctx.oy[0], py + ctx.oy[2]]);
+    showSnapLine(snapH, sy, [px + ctx.ox[0], px + ctx.ox[2]]);
+    return { sx, sy };
   }
-  function showSnapLine(el, line, prop) {
-    el.hidden = line === null || line === undefined || line === false;
-    if (!el.hidden) el.style[prop] = line / PX() + 'px';
+  // Guía rosa: solo el tramo que une la capa con aquello a lo que se alineó (el lienzo entero si es el lienzo).
+  function showSnapLine(el, hit, selfSpan) {
+    el.hidden = !hit;
+    if (!hit) return;
+    const k = PX();
+    const a = Math.min(hit.span[0], selfSpan[0]), b = Math.max(hit.span[1], selfSpan[1]);
+    Object.assign(el.style, el === snapV
+      ? { left: hit.line / k + 'px', top: a / k + 'px', height: (b - a) / k + 'px' }
+      : { top: hit.line / k + 'px', left: a / k + 'px', width: (b - a) / k + 'px' });
   }
   const hideGuides = () => ((snapV.hidden = true), (snapH.hidden = true));
+
+  // ---------- tamaño con las asas ----------
+  function startResize(e, hx, hy) {
+    const l = selected();
+    const b = l && !l.locked && localBox(l);
+    if (!b) return;
+    e.stopPropagation();
+    e.preventDefault();
+    drag = {
+      mode: 'resize', l, hx, hy, sx: e.clientX, sy: e.clientY, moved: true,
+      x: l.x, y: l.y, b, w0: b.x1 - b.x0 || 1, h0: b.y1 - b.y0 || 1,
+      s0: { size: l.size, letterSpacing: l.letterSpacing || 0, strokeWidth: l.strokeWidth || 0, shadow: l.shadow || 0, w: l.w, h: l.h },
+      snap: snapContext(l),
+    };
+    frame.setPointerCapture(e.pointerId);
+  }
+  function resizeMove(d, e, ddx, ddy) {
+    const { l, hx, hy, w0, h0, b, s0 } = d;
+    const a = rad(l.rotate), c = Math.cos(a), s = Math.sin(a);
+    const lx = ddx * c + ddy * s, ly = -ddx * s + ddy * c; // puntero en ejes de la capa
+    let fx = hx ? (w0 + hx * lx) / w0 : 1;
+    let fy = hy ? (h0 + hy * ly) / h0 : 1;
+    // textos siempre escalan parejo; formas solo con Shift en una esquina
+    const uniform = l.type !== 'shape' || (hx && hy && e.shiftKey);
+    // punto fijo: la esquina o el lado opuesto
+    const fixX = hx > 0 ? b.x0 : hx < 0 ? b.x1 : 0;
+    const fixY = hy > 0 ? b.y0 : hy < 0 ? b.y1 : 0;
+    // imán (solo sin rotación): el borde que se mueve se pega a los destinos
+    let gx = null, gy = null;
+    if (magnet !== e.altKey && !((l.rotate || 0) % 360)) {
+      const wfx = d.x + fixX, wfy = d.y + fixY;
+      if (hx) gx = snapAxis(wfx + hx * w0 * fx, [0], d.snap.tx);
+      if (hy) gy = snapAxis(wfy + hy * h0 * fy, [0], d.snap.ty);
+      if (uniform && gx && gy) gx.d <= gy.d ? (gy = null) : (gx = null);
+      if (gx) fx = ((gx.line - wfx) * hx) / w0;
+      if (gy) fy = ((gy.line - wfy) * hy) / h0;
+    }
+    if (uniform) {
+      const f = gx ? fx : gy ? fy : hx && hy ? (fx * w0 * w0 + fy * h0 * h0) / (w0 * w0 + h0 * h0) : hx ? fx : fy;
+      fx = fy = f;
+    }
+    fx = Math.max(fx, 0.02);
+    fy = Math.max(fy, 0.02);
+    const exact = !!(gx || gy); // alineado: se guardan decimales para que el borde caiga justo en la guía
+    const num = (v) => (exact ? +v.toFixed(2) : Math.round(v));
+    if (l.type === 'shape') {
+      if (hx) l.w = Math.max(1, num(s0.w * fx));
+      if (hy && (l.shape || 'rect') !== 'line') l.h = Math.max(1, num(s0.h * fy));
+      fx = l.w / s0.w;
+      fy = (l.shape || 'rect') === 'line' ? 1 : l.h / s0.h;
+    } else {
+      l.size = clamp(num(s0.size * fx), 4, 400);
+      const k = l.size / s0.size;
+      if (s0.letterSpacing) l.letterSpacing = +(s0.letterSpacing * k).toFixed(2);
+      if (s0.strokeWidth) l.strokeWidth = +(s0.strokeWidth * k).toFixed(2);
+      if (s0.shadow) l.shadow = +(s0.shadow * k).toFixed(2);
+      fx = fy = k;
+    }
+    // caja nueva (en textos se vuelve a medir: la tinta no escala exactamente lineal) y posición corregida
+    // para que el punto fijo no se mueva
+    const nb = (l.type !== 'shape' && localBox(l)) || { x0: b.x0 * fx, x1: b.x1 * fx, y0: b.y0 * fy, y1: b.y1 * fy };
+    const nfx = hx > 0 ? nb.x0 : hx < 0 ? nb.x1 : 0;
+    const nfy = hy > 0 ? nb.y0 : hy < 0 ? nb.y1 : 0;
+    const shx = fixX - nfx, shy = fixY - nfy;
+    l.x = +(d.x + shx * c - shy * s).toFixed(2);
+    l.y = +(d.y + shx * s + shy * c).toFixed(2);
+    showSnapLine(snapV, gx, [l.y + nb.y0, l.y + nb.y1]);
+    showSnapLine(snapH, gy, [l.x + nb.x0, l.x + nb.x1]);
+  }
 
   function endDrag() {
     if (!drag) return;
@@ -709,19 +871,26 @@ export function startEditor({ onData, hasRealData, getLastData }) {
       // el fondo puede salirse del lienzo: se marca el lienzo completo y el asa de rotación arriba
       selBox.hidden = false;
       selBox.classList.remove('locked');
-      Object.assign(selBox.style, { left: '0px', top: '0px', width: PREVIEW + 'px', height: PREVIEW + 'px' });
+      selBox.dataset.handles = '';
+      Object.assign(selBox.style, { left: '0px', top: '0px', width: PREVIEW + 'px', height: PREVIEW + 'px', transform: '' });
       return;
     }
     const l = selected();
-    const el = l && renderer.nodeFor(l.id);
-    if (!el || l.visible === false) return (selBox.hidden = true);
-    const fr = frame.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
+    const b = l && l.visible !== false && localBox(l);
+    if (!b) return (selBox.hidden = true);
+    // la caja se dibuja rotada con la capa, justo sobre su caja local (la misma que usa el imán)
+    const k = PX(), a = rad(l.rotate);
+    const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+    const wx = l.x + cx * Math.cos(a) - cy * Math.sin(a), wy = l.y + cx * Math.sin(a) + cy * Math.cos(a);
+    const w = (b.x1 - b.x0) / k, hh = (b.y1 - b.y0) / k;
     selBox.hidden = false;
     selBox.classList.toggle('locked', !!l.locked);
-    Object.assign(selBox.style, { left: r.left - fr.left - 3 + 'px', top: r.top - fr.top - 3 + 'px', width: r.width + 6 + 'px', height: r.height + 6 + 'px' });
+    selBox.dataset.handles = l.locked ? '' : l.type !== 'shape' ? 'corners' : (l.shape || 'rect') === 'line' ? 'ends' : 'all';
+    Object.assign(selBox.style, {
+      left: wx / k - w / 2 + 'px', top: wy / k - hh / 2 + 'px', width: w + 'px', height: hh + 'px',
+      transform: l.rotate ? `rotate(${l.rotate}deg)` : '',
+    });
   }
-
   // ---------- inicio ----------
 
   function refreshAll() {
