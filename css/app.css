@@ -71,7 +71,28 @@ body.kraken #app { position: fixed; inset: 0; }
 .snap-guide { position: absolute; pointer-events: none; z-index: 7; background: #ff4fa3; }
 .snap-guide.v { width: 1px; margin-left: -0.5px; }
 .snap-guide.h { height: 1px; margin-top: -0.5px; }
-.stage-tools, .hint { color: var(--muted); max-width: 360px; margin: 0; }
+.toolbar { display: flex; align-items: center; gap: 4px; padding: 4px; width: 360px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; position: relative; z-index: 20; }
+.tool { position: relative; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer; padding: 0; }
+.tool .svgi { width: 18px; height: 18px; }
+.tool:hover { color: var(--text); background: #24242c; }
+.tool.on { color: var(--text); background: rgba(139, 92, 246, 0.22); border-color: rgba(139, 92, 246, 0.55); }
+.tool.help { margin-left: auto; cursor: help; }
+.tool-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+/* tooltip propio: título y descripción (no dependemos del `title` nativo dentro de CAM) */
+.tip { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; display: flex; flex-direction: column; gap: 2px;
+  width: max-content; max-width: 300px; padding: 7px 9px; border-radius: 6px; background: #24242c; border: 1px solid var(--line);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); text-align: left; font-size: 12px; line-height: 1.4; color: var(--muted);
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s 0.25s, visibility 0s 0.37s; }
+.tip b { color: var(--text); font-size: 13px; font-weight: 600; }
+.tool:hover .tip, .tool:focus-visible .tip { opacity: 1; visibility: visible; transition-delay: 0.25s, 0.25s; }
+.tool.help .tip { left: auto; right: 0; } /* el «?» va a la derecha: su ayuda abre hacia la izquierda */
+/* vistas del editor: sin fondo (cuadriculado = transparente) o sin capas */
+.frame.no-bg .cl-bg { visibility: hidden; }
+.frame.no-bg .cl-canvas { background: repeating-conic-gradient(#1c1c22 0 25%, #121216 0 50%) 0 0 / 16px 16px !important; }
+.frame.no-layers .cl-layers, .frame.no-layers .selbox:not(.bg) { visibility: hidden; }
+.hint { color: var(--muted); max-width: 360px; margin: 0; }
 .media-msg { max-width: 360px; font-size: 12px; }
 .media-msg.err { color: #ff8a8a; }
 .media-msg.note { color: #f5c26b; }

@@ -26,7 +26,6 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   if (state.debug) (state.debug = false), saveState(state);
   let preset = activePreset(state);
   let selectedId = null;
-  let showGuide = true;
   let advancedOpen = false;
   let propsLayerId = null;
   const prefs = loadPrefs();
@@ -45,7 +44,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   const barMsg = h('span', { class: 'bar-msg', role: 'status' });
   const liveBadge = h('span', { class: 'badge' });
   const header = h('header', {},
-    h('div', { class: 'brand' }, h('b', {}, 'coffeeless'), h('span', { class: 'muted' }, ' · Kraken LCD')),
+    h('div', { class: 'brand' }, h('b', {}, 'coffeeless')),
     h('div', { class: 'preset-bar' }, presetSelect, nameInput, presetActions, barMsg),
     liveBadge,
   );
@@ -53,7 +52,7 @@ export function startEditor({ onData, hasRealData, getLastData }) {
 
   const stage = h('div', { class: 'stage' });
   const frame = h('div', { class: 'frame', style: `width:${PREVIEW}px;height:${PREVIEW}px` });
-  const guide = h('div', { class: 'guide' });
+  const guide = h('div', { class: 'guide', hidden: prefs.guide === false });
   // Asas: esquinas = escala (formas: ancho y alto libres, Shift mantiene proporción); lados = un solo eje (solo formas).
   const HANDLES = { nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0] };
   const handleEls = Object.entries(HANDLES).map(([k, [hx, hy]]) =>
@@ -66,17 +65,32 @@ export function startEditor({ onData, hasRealData, getLastData }) {
   // margen alrededor del lienzo: la selección y las asas pueden salirse un poco, pero nunca tapan los paneles
   const viewport = h('div', { class: 'viewport' }, frame);
   const mediaMsg = h('div', { class: 'media-msg' });
-  stage.append(
-    viewport,
-    h('div', { class: 'stage-tools' },
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: magnet, onchange: (e) => { magnet = e.target.checked; savePref('magnet', magnet); } }), ' Imán: alinear con el lienzo y otras capas (Alt lo invierte)'),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { showGuide = e.target.checked; guide.hidden = !showGuide; } }), ' Guía del borde de la bomba (solo en el editor)'),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!state.debug, onchange: (e) => { state.debug = e.target.checked; commit(); } }), ' Diagnóstico (en el Kraken y en esta vista previa)'),
-    ),
-    mediaMsg,
-    h('p', { class: 'hint' }, 'Arrastra los elementos en la vista previa; las asas de las esquinas cambian el tamaño (en formas, Shift mantiene la proporción). Flechas: mover 1 px (Shift: 10 px). Supr: borrar. Las capas bloqueadas no se mueven y los clics las atraviesan.'),
-    h('p', { class: 'hint' }, 'Con «Fondo» seleccionado en Capas: arrastra para moverlo, rueda para escalar, Shift+arrastrar o el asa de arriba para rotar.'),
+  // Barra de herramientas sobre la vista previa: interruptores con icono y ayuda al pasar el mouse.
+  // Tooltip propio (título + descripción) en vez de `title`: no está confirmado que CAM muestre los nativos.
+  const tip = (title, ...lines) => h('span', { class: 'tip', role: 'tooltip' }, h('b', {}, title), ...lines.map((t) => h('span', {}, t)));
+  function toolToggle(iconName, title, desc, on, set) {
+    const b = h('button', { type: 'button', class: 'tool', 'aria-label': title }, svgIcon(iconName), tip(title, desc));
+    const paint = (v) => (b.classList.toggle('on', v), b.setAttribute('aria-pressed', String(v)));
+    paint(on);
+    b.addEventListener('click', () => { on = !on; paint(on); set(on); });
+    return b;
+  }
+  const toolbar = h('div', { class: 'toolbar', role: 'toolbar' },
+    toolToggle('magnet', 'Imán', 'Alinea con el lienzo y otras capas (Alt lo invierte)', magnet, (v) => { magnet = v; savePref('magnet', v); }),
+    toolToggle('guide', 'Guía circular', 'Borde de la pantalla redonda (solo en el editor)', !guide.hidden, (v) => { guide.hidden = !v; savePref('guide', v); }),
+    toolToggle('diag', 'Diagnóstico', 'Se ve en el Kraken y en esta vista previa', !!state.debug, (v) => { state.debug = v; commit(); }),
+    h('span', { class: 'tool-sep' }),
+    // Vistas solo del editor (no cambian el preset ni el Kraken); se reinician al abrir el editor.
+    toolToggle('image', 'Mostrar fondo', 'Ocúltalo para ver solo las capas (solo en el editor)', true, (v) => frame.classList.toggle('no-bg', !v)),
+    toolToggle('layers', 'Mostrar capas', 'Ocúltalas para ver solo el fondo (solo en el editor)', true, (v) => { frame.classList.toggle('no-layers', !v); drawSelection(); }),
+    h('span', { class: 'tool help', tabindex: 0, 'aria-label': 'Atajos' }, svgIcon('help'),
+      tip('Atajos',
+        'Arrastrar: mover · Asas: tamaño (Shift: proporción)',
+        'Flechas: 1 px · Shift+flechas: 10 px · Supr: borrar',
+        'Fondo: arrastrar, rueda = escala, Shift o asa = rotar',
+        'Las capas bloqueadas no se mueven y los clics las atraviesan')),
   );
+  stage.append(toolbar, viewport, mediaMsg);
 
   const bgPanel = h('section', { class: 'card' });
   const layerList = h('div', { class: 'layer-list' });

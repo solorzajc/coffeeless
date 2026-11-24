@@ -17,6 +17,11 @@ const PATHS = {
   line: '<path d="M4 12h16"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  magnet: '<path d="M5 4.5h5V12a2 2 0 0 0 4 0V4.5h5V12a7 7 0 0 1-14 0z"/><path d="M5 8.5h5M14 8.5h5"/>',
+  guide: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="6.5" stroke-dasharray="2.6 2.4"/>',
+  diag: '<circle cx="10.5" cy="10.5" r="7"/><path d="M15.5 15.5L21 21"/><path d="M6.5 10.5h1.5l1.2-2.5 2 5 1.3-2.5h1.5"/>',
+  layers: '<path d="M12 4.5l9 5-9 5-9-5z"/><path d="M3 14.5l9 5 9-5"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.6"/><path d="M12 17h.01"/>',
 };
 
 export function icon(name) {
